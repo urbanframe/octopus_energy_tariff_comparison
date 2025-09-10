@@ -1,0 +1,33 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Octopus Energy Tariff Comparison",
+        "description": "Enter your Octopus Energy account details",
+        "data": {
+          "account_number": "Account Number",
+          "api_key": "API Key",
+          "mpan": "MPAN",
+          "serial_number": "Serial Number",
+          "region_code": "Region Code"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Failed to connect to Octopus Energy API",
+      "invalid_auth": "Invalid authentication credentials",
+      "unknown": "Unexpected error occurred"
+    },
+    "abort": {
+      "already_configured": "Account is already configured"
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Octopus Energy Options",
+        "description": "Configure update options"
+      }
+    }
+  }
+}
