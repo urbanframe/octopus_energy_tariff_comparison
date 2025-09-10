@@ -177,13 +177,24 @@ class OctopusEnergyAPI:
     def _get_consumption_data(self, device_id: str, kraken_token: str) -> Tuple[List[Dict], date]:
         """Get consumption data for today."""
         today = date.today()
+
+        local = pytz.timezone("Europe/London")
+        starttime = datetime.strptime('0000','%H%M').time()
+        endtime = datetime.strptime('235959','%H%M%S').time()
+    
+        startdt = datetime.combine(date.today(), starttime)
+        local_startdt = local.localize(startdt, is_dst=None)
+        startutc_dt = local_startdt.astimezone(pytz.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        enddt = datetime.combine(date.today(), endtime)
+        local_enddt = local.localize(enddt, is_dst=None)
+        endutc_dt = local_enddt.astimezone(pytz.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
         
         query = f"""query {{
             smartMeterTelemetry(
                 deviceId: "{device_id}"
                 grouping: HALF_HOURLY
-                start: "{today}T00:00:00Z"
-                end: "{today}T23:59:59Z"
+                start: "{startutc_dt}"
+                end: "{endutc_dt}"
             ) {{
                 readAt
                 consumptionDelta
@@ -269,9 +280,23 @@ class OctopusEnergyAPI:
             
             if not unit_rates_link:
                 raise ValueError(f"Standard unit rates link not found for region: {region_code_key}")
+
+            # Added code to get utc from london time
+            local = pytz.timezone("Europe/London")
+            starttime = datetime.strptime('0000','%H%M').time()
+            endtime = datetime.strptime('235959','%H%M%S').time()
+    
+            startdt = datetime.combine(date.today(), starttime)
+            local_startdt = local.localize(startdt, is_dst=None)
+            startutc_dt = local_startdt.astimezone(pytz.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+            enddt = datetime.combine(date.today(), endtime)
+            local_enddt = local.localize(enddt, is_dst=None)
+            endutc_dt = local_enddt.astimezone(pytz.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
             
             # Get rates for the analysis date
-            unit_rates_link_with_time = f"{unit_rates_link}?period_from={analysis_date}T00:00:00Z&period_to={analysis_date}T23:59:59Z"
+            unit_rates_link_with_time = f"{unit_rates_link}?period_from={startutc_dt}&period_to={endutc_dt}"
             unit_rates = self._rest_query(unit_rates_link_with_time)
             
             return standing_charge_inc_vat, unit_rates.get("results", []), product["code"]
