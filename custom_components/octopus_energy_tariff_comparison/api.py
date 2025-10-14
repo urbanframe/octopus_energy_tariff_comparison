@@ -3,10 +3,8 @@ from __future__ import annotations
 
 import base64
 import logging
-import pytz
 from datetime import date, datetime
 from typing import Any, Dict, List, Tuple
-from zoneinfo import ZoneInfo
 
 import requests
 
@@ -179,24 +177,13 @@ class OctopusEnergyAPI:
     def _get_consumption_data(self, device_id: str, kraken_token: str) -> Tuple[List[Dict], date]:
         """Get consumption data for today."""
         today = date.today()
-
-        local = pytz.timezone("Europe/London")
-        starttime = datetime.strptime('0000','%H%M').time()
-        endtime = datetime.strptime('235959','%H%M%S').time()
-    
-        startdt = datetime.combine(date.today(), starttime)
-        local_startdt = local.localize(startdt, is_dst=None)
-        startutc_dt = local_startdt.astimezone(pytz.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-        enddt = datetime.combine(date.today(), endtime)
-        local_enddt = local.localize(enddt, is_dst=None)
-        endutc_dt = local_enddt.astimezone(pytz.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
         
         query = f"""query {{
             smartMeterTelemetry(
                 deviceId: "{device_id}"
                 grouping: HALF_HOURLY
-                start: "{startutc_dt}"
-                end: "{endutc_dt}"
+                start: "{today}T00:00:00Z"
+                end: "{today}T23:59:59Z"
             ) {{
                 readAt
                 consumptionDelta
@@ -282,23 +269,9 @@ class OctopusEnergyAPI:
             
             if not unit_rates_link:
                 raise ValueError(f"Standard unit rates link not found for region: {region_code_key}")
-
-            # Added code to get utc from london time
-            local = pytz.timezone("Europe/London")
-            starttime = datetime.strptime('0000','%H%M').time()
-            endtime = datetime.strptime('235959','%H%M%S').time()
-    
-            startdt = datetime.combine(date.today(), starttime)
-            local_startdt = local.localize(startdt, is_dst=None)
-            startutc_dt = local_startdt.astimezone(pytz.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-            enddt = datetime.combine(date.today(), endtime)
-            local_enddt = local.localize(enddt, is_dst=None)
-            endutc_dt = local_enddt.astimezone(pytz.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-
-
             
             # Get rates for the analysis date
-            unit_rates_link_with_time = f"{unit_rates_link}?period_from={startutc_dt}&period_to={endutc_dt}"
+            unit_rates_link_with_time = f"{unit_rates_link}?period_from={analysis_date}T00:00:00Z&period_to={analysis_date}T23:59:59Z"
             unit_rates = self._rest_query(unit_rates_link_with_time)
             
             return standing_charge_inc_vat, unit_rates.get("results", []), product["code"]
@@ -370,8 +343,9 @@ class OctopusEnergyAPI:
             # Calculate total consumption
             total_consumption = sum(float(reading.get("consumptionDelta", 0) or 0) / 1000 for reading in consumption_data)
             
-            # Compare costs across tariffs
+            # Compare costs across tariffs and collect rates
             tariff_costs = {}
+            tariff_rates = {}
             
             for tariff in TARIFFS_TO_COMPARE:
                 try:
@@ -385,7 +359,11 @@ class OctopusEnergyAPI:
                     total_cost = self._calculate_cost_for_consumption(
                         consumption_data, unit_rates, standing_charge)
                     
-                    tariff_costs[tariff.lower().replace(" ", "_")] = total_cost
+                    tariff_key = tariff.lower().replace(" ", "_")
+                    tariff_costs[tariff_key] = total_cost
+                    
+                    # Store rates for event entities
+                    tariff_rates[tariff_key] = self._format_rates_for_event(unit_rates)
                     
                 except Exception as e:
                     _LOGGER.error("Error analyzing %s: %s", tariff, e)
@@ -394,9 +372,22 @@ class OctopusEnergyAPI:
                 "current_tariff_name": current_tariff_name,
                 "total_consumption": round(total_consumption, 3),
                 "number_of_readings": len(consumption_data),
+                "tariff_rates": tariff_rates,
                 **tariff_costs
             }
             
         except Exception as e:
             _LOGGER.error("Error getting tariff data: %s", e)
             raise
+
+    def _format_rates_for_event(self, unit_rates: List[Dict]) -> List[Dict]:
+        """Format unit rates for event entity attributes."""
+        formatted_rates = []
+        for rate in unit_rates:
+            formatted_rates.append({
+                "start": rate["valid_from"],
+                "end": rate["valid_to"],
+                "value_inc_vat": rate["value_inc_vat"],
+                "is_capped": False
+            })
+        return formatted_rates
