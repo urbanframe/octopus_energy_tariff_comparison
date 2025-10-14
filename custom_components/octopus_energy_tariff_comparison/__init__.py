@@ -1,8 +1,6 @@
 """The Octopus Energy Tariff Comparison integration."""
 from __future__ import annotations
 
-import asyncio
-
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.const import Platform
@@ -10,7 +8,7 @@ from homeassistant.const import Platform
 from .const import DOMAIN
 from .coordinator import OctopusEnergyCoordinator
 
-PLATFORMS: list[Platform] = [Platform.SENSOR]
+PLATFORMS: list[Platform] = [Platform.SENSOR, Platform.EVENT]
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
