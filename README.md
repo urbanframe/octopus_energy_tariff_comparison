@@ -1,6 +1,11 @@
 # Octopus Energy Tariff Comparison - Home Assistant Integration
 
 This Home Assistant integration compares electricity costs across different Octopus Energy tariffs based on your current day's usage.
+It also provides today's rates for Agile, Go and Cozy tariffs.  
+
+The rate entities match those provided for your current tariff by BottlecapDave's fantastic [HomeAssistant-OctopusEnergy](https://github.com/BottlecapDave/HomeAssistant-OctopusEnergy) integration.
+
+This integration is compatable with lozzd's brilliant [Octopus Energy Rates Card](https://github.com/lozzd/octopus-energy-rates-card).
 
 ## Features
 
@@ -18,6 +23,9 @@ And the following event entities with rate data:
 - **Octopus Go Rates**: Half-hourly rates for Go tariff
 - **Cosy Octopus Rates**: Half-hourly rates for Cosy tariff
 - **Flexible Octopus Rates**: Half-hourly rates for Flexible tariff
+
+<img width="440" height="319" alt="image" src="https://github.com/user-attachments/assets/dd4dc634-7fde-4492-bff1-5fbef8c0a6c1" />
+
 
 ## Installation
 
@@ -72,6 +80,86 @@ And the following event entities with rate data:
 - The integration polls the Octopus Energy API every 30 minutes
 - Cost calculations are based on your current day's consumption
 - All costs include VAT and are shown in pence
+
+## Octopus Energy Rates Card Example
+
+```yaml
+type: custom:octopus-energy-rates-card
+currentEntity: event.agile_octopus_rates
+cols: 3
+hour12: false
+showday: true
+showpast: false
+title: Agile Tariff Rate
+unitstr: p
+lowlimit: 15
+mediumlimit: 20
+highlimit: 27.27
+roundUnits: 2
+cheapest: true
+multiplier: 100
+```
+<img width="444" height="803" alt="image" src="https://github.com/user-attachments/assets/42022a86-15b8-4cfc-8955-51b93cd8efee" />
+
+## Apexcharts Card Example
+
+```yaml
+type: custom:apexcharts-card
+header:
+  show: true
+  show_states: true
+  colorize_states: true
+  title: Current Agile Tariff Rates
+experimental:
+  color_threshold: true
+graph_span: 2d
+stacked: false
+span:
+  start: hour
+apex_config:
+  chart:
+    height: 400
+  legend:
+    show: false
+yaxis:
+  - min: ~0
+    max: ~35
+    decimals: 1
+series:
+  - entity: event.agile_octopus_rates
+    type: column
+    name: ""
+    color_threshold:
+      - value: 0
+        color: blue
+      - value: 0
+        color: green
+      - value: 20
+        color: orange
+      - value: 27.27
+        color: red
+    opacity: 1
+    stroke_width: 0
+    unit: p
+    show:
+      in_header: false
+      legend_value: false
+    data_generator: |
+      return entity.attributes.rates.map((entry) => {
+      return [new Date(entry.start), entry.value_inc_vat * 100];
+      });
+    offset: "-15min"
+  - entity: sensor.octopus_flex_rate
+    opacity: 0.5
+    stroke_width: 2
+    stroke_dash: 6
+    name: ""
+    show:
+      in_header: false
+      legend_value: false
+```
+<img width="440" height="385" alt="image" src="https://github.com/user-attachments/assets/b37549b4-b66e-4982-aa2e-c61f40e49a11" />
+
 
 ## Sensors Details
 
