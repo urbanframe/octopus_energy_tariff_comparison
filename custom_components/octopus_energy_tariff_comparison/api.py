@@ -431,5 +431,5 @@ class OctopusEnergyAPI:
                     "is_capped": False
                 })
         
-        # Reverse the order so most recent is first
-        return list(reversed(formatted_rates))
+        # Return in chronological order (earliest first)
+        return formatted_rates
