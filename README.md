@@ -82,84 +82,225 @@ And the following event entities with rate data:
 - Cost calculations are based on your current day's consumption
 - All costs include VAT and are shown in pence
 
-## Octopus Energy Rates Card Example
+## Octopus Energy Rates and Apex Chart Dashboard Example
+
+<img width="785" height="652" alt="image" src="https://github.com/user-attachments/assets/cdafef6b-48d1-463d-829d-fc12d489a3ef" />
+<img width="785" height="648" alt="image" src="https://github.com/user-attachments/assets/dedf8f08-445f-4b88-ac9a-4920281ffca6" />
+<img width="785" height="648" alt="image" src="https://github.com/user-attachments/assets/8d6b1a23-de09-431f-a58e-962220adc23e" />
 
 ```yaml
-type: custom:octopus-energy-rates-card
-currentEntity: event.agile_octopus_rates
-cols: 3
-hour12: false
-showday: true
-showpast: false
-title: Agile Tariff Rate
-unitstr: p
-lowlimit: 15
-mediumlimit: 20
-highlimit: 27.27
-roundUnits: 2
-cheapest: true
-multiplier: 100
-```
-<img width="444" height="803" alt="image" src="https://github.com/user-attachments/assets/42022a86-15b8-4cfc-8955-51b93cd8efee" />
+type: sections
+max_columns: 2
+title: agile test
+path: agile-test
+sections:
+  - type: grid
+    cards:
+      - type: custom:octopus-energy-rates-card
+        currentEntity: event.agile_octopus_rates
+        cols: 3
+        hour12: false
+        showday: true
+        showpast: false
+        title: Agile Tariff Rate
+        unitstr: p
+        lowlimit: 15
+        mediumlimit: 20
+        highlimit: 27.27
+        roundUnits: 2
+        cheapest: true
+        multiplier: 100
+      - type: custom:apexcharts-card
+        header:
+          show: true
+          show_states: true
+          colorize_states: true
+          title: Current Agile Tariff Rates
+        experimental:
+          color_threshold: true
+        graph_span: 2d
+        stacked: false
+        span:
+          start: hour
+        apex_config:
+          chart:
+            height: 400
+          legend:
+            show: false
+        yaxis:
+          - min: ~0
+            max: ~35
+            decimals: 1
+        series:
+          - entity: event.agile_octopus_rates
+            type: column
+            name: ""
+            color_threshold:
+              - value: 0
+                color: blue
+              - value: 0
+                color: green
+              - value: 20
+                color: orange
+              - value: 27.27
+                color: red
+            opacity: 1
+            stroke_width: 0
+            unit: p
+            show:
+              in_header: false
+              legend_value: false
+            data_generator: |
+              return entity.attributes.rates.map((entry) => {
+              return [new Date(entry.start), entry.value_inc_vat * 100];
+              });
+            offset: "-15min"
+          - entity: sensor.octopus_flex_rate
+            opacity: 0.5
+            stroke_width: 2
+            stroke_dash: 6
+            name: ""
+            show:
+              in_header: false
+              legend_value: false
+      - type: custom:octopus-energy-rates-card
+        currentEntity: event.octopus_go_rates
+        cols: 3
+        hour12: false
+        showday: true
+        showpast: false
+        title: Go Tariff Rate
+        unitstr: p
+        lowlimit: 15
+        mediumlimit: 20
+        roundUnits: 2
+        cheapest: true
+        multiplier: 100
+      - type: custom:apexcharts-card
+        header:
+          show: true
+          show_states: true
+          colorize_states: true
+          title: Current Go Tariff Rates
+        experimental:
+          color_threshold: true
+        graph_span: 2d
+        stacked: false
+        span:
+          start: hour
+        apex_config:
+          chart:
+            height: 400
+          legend:
+            show: false
+        yaxis:
+          - min: ~0
+            max: ~35
+            decimals: 1
+        series:
+          - entity: event.octopus_go_rates
+            type: column
+            name: ""
+            color_threshold:
+              - value: 0
+                color: blue
+              - value: 0
+                color: green
+              - value: 20
+                color: orange
+              - value: 27.27
+                color: red
+            opacity: 1
+            stroke_width: 0
+            unit: p
+            show:
+              in_header: false
+              legend_value: false
+            data_generator: |
+              return entity.attributes.rates.map((entry) => {
+              return [new Date(entry.start), entry.value_inc_vat * 100];
+              });
+            offset: "-15min"
+          - entity: sensor.octopus_flex_rate
+            opacity: 0.5
+            stroke_width: 2
+            stroke_dash: 6
+            name: ""
+            show:
+              in_header: false
+              legend_value: false
+      - type: custom:octopus-energy-rates-card
+        currentEntity: event.cosy_octopus_rates
+        cols: 3
+        hour12: false
+        showday: true
+        showpast: false
+        title: Cosy Tariff Rate
+        unitstr: p
+        lowlimit: 15
+        mediumlimit: 20
+        roundUnits: 2
+        cheapest: true
+        multiplier: 100
+      - type: custom:apexcharts-card
+        header:
+          show: true
+          show_states: true
+          colorize_states: true
+          title: Current Cosy Tariff Rates
+        experimental:
+          color_threshold: true
+        graph_span: 2d
+        stacked: false
+        span:
+          start: hour
+        apex_config:
+          chart:
+            height: 400
+          legend:
+            show: false
+        yaxis:
+          - min: ~0
+            max: ~35
+            decimals: 1
+        series:
+          - entity: event.cosy_octopus_rates
+            type: column
+            name: ""
+            color_threshold:
+              - value: 0
+                color: blue
+              - value: 0
+                color: green
+              - value: 20
+                color: orange
+              - value: 27.27
+                color: red
+            opacity: 1
+            stroke_width: 0
+            unit: p
+            show:
+              in_header: false
+              legend_value: false
+            data_generator: |
+              return entity.attributes.rates.map((entry) => {
+              return [new Date(entry.start), entry.value_inc_vat * 100];
+              });
+            offset: "-15min"
+          - entity: sensor.octopus_flex_rate
+            opacity: 0.5
+            stroke_width: 2
+            stroke_dash: 6
+            name: ""
+            show:
+              in_header: false
+              legend_value: false
+    column_span: 4
+  - type: grid
+    cards: []
+cards: []
 
-## Apexcharts Card Example
-
-```yaml
-type: custom:apexcharts-card
-header:
-  show: true
-  show_states: true
-  colorize_states: true
-  title: Current Agile Tariff Rates
-experimental:
-  color_threshold: true
-graph_span: 2d
-stacked: false
-span:
-  start: hour
-apex_config:
-  chart:
-    height: 400
-  legend:
-    show: false
-yaxis:
-  - min: ~0
-    max: ~35
-    decimals: 1
-series:
-  - entity: event.agile_octopus_rates
-    type: column
-    name: ""
-    color_threshold:
-      - value: 0
-        color: blue
-      - value: 0
-        color: green
-      - value: 20
-        color: orange
-      - value: 27.27
-        color: red
-    opacity: 1
-    stroke_width: 0
-    unit: p
-    show:
-      in_header: false
-      legend_value: false
-    data_generator: |
-      return entity.attributes.rates.map((entry) => {
-      return [new Date(entry.start), entry.value_inc_vat * 100];
-      });
-    offset: "-15min"
-  - entity: sensor.octopus_flex_rate
-    opacity: 0.5
-    stroke_width: 2
-    stroke_dash: 6
-    name: ""
-    show:
-      in_header: false
-      legend_value: false
 ```
-<img width="440" height="385" alt="image" src="https://github.com/user-attachments/assets/b37549b4-b66e-4982-aa2e-c61f40e49a11" />
 
 
 ## Sensors Details
