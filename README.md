@@ -5,7 +5,7 @@ It also provides today's rates for Agile, Go and Cozy tariffs.
 
 The rate entities match those provided for your current tariff by BottlecapDave's fantastic [HomeAssistant-OctopusEnergy](https://github.com/BottlecapDave/HomeAssistant-OctopusEnergy) integration.
 
-This integration is compatable with lozzd's brilliant [Octopus Energy Rates Card](https://github.com/lozzd/octopus-energy-rates-card).
+This integration is compatible with lozzd's brilliant [Octopus Energy Rates Card](https://github.com/lozzd/octopus-energy-rates-card).
 
 ## Features
 
