@@ -324,26 +324,8 @@ Each cost sensor shows:
 ## Event Entities
 
 ### Rate Events
-Each tariff has an event entity that contains the half-hourly rates as attributes:
+Each tariff has an event entity that contains the half-hourly rates as attributes
 
-**Attributes format:**
-```yaml
-rates:
-  - start: '2025-10-14T23:30:00+00:00'
-    end: '2025-10-14T24:00:00+00:00'
-    value_inc_vat: 0.003051  # in GBP (not pence)
-    is_capped: false
-  - start: '2025-10-14T23:00:00+00:00'
-    end: '2025-10-14T23:30:00+00:00'
-    value_inc_vat: 0.000850
-    is_capped: false
-  # ... (48 periods total, in reverse chronological order)
-```
-
-**Notes:**
-- Rates are in **GBP** (pounds), not pence
-- All 48 half-hourly periods are included (even if the tariff rate doesn't change)
-- Rates are in **reverse chronological order** (most recent first)
 
 **Available event entities:**
 - `event.agile_octopus_rates`
