@@ -381,13 +381,55 @@ class OctopusEnergyAPI:
             raise
 
     def _format_rates_for_event(self, unit_rates: List[Dict]) -> List[Dict]:
-        """Format unit rates for event entity attributes."""
-        formatted_rates = []
+        """Format unit rates for event entity attributes with all 48 half-hourly periods."""
+        from datetime import datetime, timedelta
+        
+        # Create a map of rates by their valid_from time
+        rate_map = {}
         for rate in unit_rates:
-            formatted_rates.append({
-                "start": rate["valid_from"],
-                "end": rate["valid_to"],
-                "value_inc_vat": rate["value_inc_vat"],
-                "is_capped": False
-            })
-        return formatted_rates
+            rate_map[rate["valid_from"]] = float(rate["value_inc_vat"])
+        
+        # Sort rates by time to find the correct rate for any period
+        sorted_rates = sorted(rate_map.items())
+        
+        # Generate all 48 half-hourly periods for today
+        formatted_rates = []
+        
+        # Get the date from the first rate if available, otherwise use today
+        if unit_rates:
+            base_date = datetime.fromisoformat(unit_rates[0]["valid_from"].replace('Z', '+00:00'))
+            start_of_day = base_date.replace(hour=0, minute=0, second=0, microsecond=0)
+        else:
+            from datetime import date
+            today = date.today()
+            start_of_day = datetime(today.year, today.month, today.day, 0, 0, 0)
+        
+        # Create 48 half-hourly periods
+        for period in range(48):
+            period_start = start_of_day + timedelta(minutes=30 * period)
+            period_end = period_start + timedelta(minutes=30)
+            
+            # Find the applicable rate for this period
+            applicable_rate = None
+            period_start_iso = period_start.isoformat()
+            
+            for rate_time, rate_value in sorted_rates:
+                if rate_time <= period_start_iso:
+                    applicable_rate = rate_value
+                else:
+                    break
+            
+            # If no rate found before this period, use the first available rate
+            if applicable_rate is None and sorted_rates:
+                applicable_rate = sorted_rates[0][1]
+            
+            if applicable_rate is not None:
+                formatted_rates.append({
+                    "start": period_start.isoformat(),
+                    "end": period_end.isoformat(),
+                    "value_inc_vat": round(applicable_rate / 100, 6),  # Convert pence to GBP
+                    "is_capped": False
+                })
+        
+        # Reverse the order so most recent is first
+        return list(reversed(formatted_rates))
