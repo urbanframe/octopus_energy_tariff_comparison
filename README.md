@@ -82,7 +82,7 @@ And the following event entities with rate data:
 - Cost calculations are based on your current day's consumption
 - All costs include VAT and are shown in pence
 
-## Octopus Energy Rates and Apex Chart Dashboard Example
+## Octopus Energy Rates Card and Apex Chart Dashboard Example
 
 <img width="785" height="652" alt="image" src="https://github.com/user-attachments/assets/cdafef6b-48d1-463d-829d-fc12d489a3ef" />
 <img width="785" height="648" alt="image" src="https://github.com/user-attachments/assets/dedf8f08-445f-4b88-ac9a-4920281ffca6" />
