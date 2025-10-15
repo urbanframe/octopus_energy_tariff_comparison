@@ -213,6 +213,8 @@ class OctopusEnergyAPI:
 
     def _get_potential_tariff_rates(self, tariff: str, region_code: str, analysis_date: date) -> Tuple[float, List[Dict], str]:
         """Get tariff rates for a specific tariff and region using REST API."""
+        from datetime import timedelta
+        
         try:
             all_products = self._rest_query(f"{REST_BASE_URL}/products/?brand=OCTOPUS_ENERGY&is_business=false")
             
@@ -270,8 +272,9 @@ class OctopusEnergyAPI:
             if not unit_rates_link:
                 raise ValueError(f"Standard unit rates link not found for region: {region_code_key}")
             
-            # Get rates for the analysis date
-            unit_rates_link_with_time = f"{unit_rates_link}?period_from={analysis_date}T00:00:00Z&period_to={analysis_date}T23:59:59Z"
+            # Get rates for today and tomorrow
+            tomorrow = analysis_date + timedelta(days=1)
+            unit_rates_link_with_time = f"{unit_rates_link}?period_from={analysis_date}T00:00:00Z&period_to={tomorrow}T23:59:59Z"
             unit_rates = self._rest_query(unit_rates_link_with_time)
             
             return standing_charge_inc_vat, unit_rates.get("results", []), product["code"]
@@ -381,8 +384,11 @@ class OctopusEnergyAPI:
             raise
 
     def _format_rates_for_event(self, unit_rates: List[Dict]) -> List[Dict]:
-        """Format unit rates for event entity attributes with all 48 half-hourly periods."""
-        from datetime import datetime, timedelta
+        """Format unit rates for event entity attributes with all half-hourly periods for today and tomorrow."""
+        from datetime import datetime, timedelta, timezone
+        
+        if not unit_rates:
+            return []
         
         # Create a map of rates by their valid_from time
         rate_map = {}
@@ -392,31 +398,36 @@ class OctopusEnergyAPI:
         # Sort rates by time to find the correct rate for any period
         sorted_rates = sorted(rate_map.items())
         
-        # Generate all 48 half-hourly periods for today
+        # Get today's date at midnight in the timezone of the first rate
+        first_rate_time = datetime.fromisoformat(unit_rates[0]["valid_from"].replace('Z', '+00:00'))
+        
+        # Use UTC for consistency
+        today = datetime.now(timezone.utc).date()
+        start_of_today = datetime(today.year, today.month, today.day, 0, 0, 0, tzinfo=timezone.utc)
+        end_of_today = start_of_today + timedelta(days=1)
+        end_of_tomorrow = start_of_today + timedelta(days=2)
+        
         formatted_rates = []
         
-        # Get the date from the first rate if available, otherwise use today
-        if unit_rates:
-            base_date = datetime.fromisoformat(unit_rates[0]["valid_from"].replace('Z', '+00:00'))
-            start_of_day = base_date.replace(hour=0, minute=0, second=0, microsecond=0)
-        else:
-            from datetime import date
-            today = date.today()
-            start_of_day = datetime(today.year, today.month, today.day, 0, 0, 0)
+        # Determine if we have tomorrow's data by checking if any rates exist after today
+        has_tomorrow = any(rate_time >= end_of_today.isoformat().replace('+00:00', 'Z') for rate_time, _ in sorted_rates)
         
-        # Create 48 half-hourly periods
-        for period in range(48):
-            period_start = start_of_day + timedelta(minutes=30 * period)
-            period_end = period_start + timedelta(minutes=30)
+        # Create periods for today and tomorrow if available
+        end_time = end_of_tomorrow if has_tomorrow else end_of_today
+        
+        current_time = start_of_today
+        while current_time < end_time:
+            period_start = current_time
+            period_end = current_time + timedelta(minutes=30)
             
             # Find the applicable rate for this period
             applicable_rate = None
-            period_start_iso = period_start.isoformat()
+            period_start_iso = period_start.isoformat().replace('+00:00', 'Z')
             
-            for rate_time, rate_value in sorted_rates:
+            # Find the most recent rate that started before or at this period
+            for rate_time, rate_value in reversed(sorted_rates):
                 if rate_time <= period_start_iso:
                     applicable_rate = rate_value
-                else:
                     break
             
             # If no rate found before this period, use the first available rate
@@ -430,6 +441,8 @@ class OctopusEnergyAPI:
                     "value_inc_vat": round(applicable_rate / 100, 6),  # Convert pence to GBP
                     "is_capped": False
                 })
+            
+            current_time = period_end
         
         # Return in chronological order (earliest first)
         return formatted_rates
