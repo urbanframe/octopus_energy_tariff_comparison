@@ -390,18 +390,45 @@ class OctopusEnergyAPI:
         if not unit_rates:
             return []
         
+        # Filter for DIRECT_DEBIT rates that are currently valid (valid_to is null or in the future)
+        now = datetime.now(timezone.utc).isoformat()
+        filtered_rates = []
+        
+        for rate in unit_rates:
+            # Prefer DIRECT_DEBIT, but fallback to any payment method if not available
+            is_direct_debit = rate.get("payment_method") == "DIRECT_DEBIT"
+            valid_to = rate.get("valid_to")
+            valid_from = rate.get("valid_from")
+            
+            # Rate is valid if valid_to is None (ongoing) or in the future
+            is_valid = valid_to is None or valid_to > now
+            
+            # Rate has started
+            has_started = valid_from <= now
+            
+            if is_direct_debit and is_valid:
+                filtered_rates.append(rate)
+        
+        # If no DIRECT_DEBIT rates found, fall back to all valid rates
+        if not filtered_rates:
+            filtered_rates = [r for r in unit_rates if (r.get("valid_to") is None or r.get("valid_to") > now)]
+        
+        # If still no rates, use all rates
+        if not filtered_rates:
+            filtered_rates = unit_rates
+        
         # Create a map of rates by their valid_from time
         rate_map = {}
-        for rate in unit_rates:
-            rate_map[rate["valid_from"]] = float(rate["value_inc_vat"])
+        for rate in filtered_rates:
+            valid_from = rate["valid_from"]
+            # For rates with the same valid_from, prefer DIRECT_DEBIT
+            if valid_from not in rate_map or rate.get("payment_method") == "DIRECT_DEBIT":
+                rate_map[valid_from] = float(rate["value_inc_vat"])
         
         # Sort rates by time to find the correct rate for any period
         sorted_rates = sorted(rate_map.items())
         
-        # Get today's date at midnight in the timezone of the first rate
-        first_rate_time = datetime.fromisoformat(unit_rates[0]["valid_from"].replace('Z', '+00:00'))
-        
-        # Use UTC for consistency
+        # Get today's date at midnight in UTC
         today = datetime.now(timezone.utc).date()
         start_of_today = datetime(today.year, today.month, today.day, 0, 0, 0, tzinfo=timezone.utc)
         end_of_today = start_of_today + timedelta(days=1)
