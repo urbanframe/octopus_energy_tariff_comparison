@@ -9,5 +9,5 @@
   "iot_class": "cloud_polling",
   "issue_tracker": "https://github.com/urbanframe/octopus_energy_tariff_comparison/issues",
   "requirements": ["requests"],
-  "version": "0.1.4"
+  "version": "0.1.5"
 }
