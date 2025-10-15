@@ -2,14 +2,18 @@
 
 # Octopus Energy Tariff Comparison
 
-This Home Assistant integration compares electricity costs across different Octopus Energy tariffs based on your current day's usage.
+This Home Assistant integration compares electricity costs across different Octopus Energy smart tariffs based on your current day's usage.
 It also provides today's rates for Agile, Go and Cozy tariffs.  
 
-The rate entities match those provided for your current tariff by BottlecapDave's fantastic [HomeAssistant-OctopusEnergy](https://github.com/BottlecapDave/HomeAssistant-OctopusEnergy) integration.
+The rate entities match those provided by BottlecapDave's fantastic [HomeAssistant-OctopusEnergy](https://github.com/BottlecapDave/HomeAssistant-OctopusEnergy) integration.
 
 This integration is compatible with lozzd's brilliant [Octopus Energy Rates Card](https://github.com/lozzd/octopus-energy-rates-card).
 
 <img width="440" height="319" alt="image" src="https://github.com/user-attachments/assets/dd4dc634-7fde-4492-bff1-5fbef8c0a6c1" />
+
+## Requirements
+
+This integration requires an [Octopus Home Mini](https://octopus.energy/blog/octopus-home-mini/).
 
 ## Features
 
@@ -80,7 +84,7 @@ And the following event entities with rate data:
 
 - The integration polls the Octopus Energy API every 30 minutes
 - Cost calculations are based on your current day's consumption
-- All costs include VAT and are shown in pence
+- All costs include VAT
 
 ## Octopus Energy Rates Card and Apex Chart Dashboard Example
 
