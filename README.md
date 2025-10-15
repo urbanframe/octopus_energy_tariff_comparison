@@ -9,8 +9,17 @@ The rate entities match those provided by BottlecapDave's fantastic [HomeAssista
 
 This integration is compatible with lozzd's brilliant [Octopus Energy Rates Card](https://github.com/lozzd/octopus-energy-rates-card).
 
-<img width="440" height="319" alt="image" src="https://github.com/user-attachments/assets/dd4dc634-7fde-4492-bff1-5fbef8c0a6c1" />
+<img width="446" height="672" alt="image" src="https://github.com/user-attachments/assets/fa3afaeb-0866-431a-ba20-9d295ab76d49" />
 
+```yaml
+type: history-graph
+entities:
+  - entity: sensor.agile_octopus_cost_today
+  - entity: sensor.cosy_octopus_cost_today
+  - entity: sensor.octopus_go_cost_today
+  - entity: sensor.flexible_octopus_cost_today
+hours_to_show: 48
+```
 ## Requirements
 
 This integration requires an [Octopus Home Mini](https://octopus.energy/blog/octopus-home-mini/).
