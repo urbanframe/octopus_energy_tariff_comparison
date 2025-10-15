@@ -4,10 +4,10 @@
   "codeowners": ["@urbanframe"],
   "config_flow": true,
   "dependencies": [],
-  "documentation": "https://github.com/urbanframe/octopus-energy-tariff-comparison",
+  "documentation": "https://github.com/urbanframe/octopus_energy_tariff_comparison",
   "integration_type": "service",
   "iot_class": "cloud_polling",
-  "issue_tracker": "https://github.com/urbanframe/octopus-energy-tariff-comparison/issues",
+  "issue_tracker": "https://github.com/urbanframe/octopus_energy_tariff_comparison/issues",
   "requirements": ["requests"],
   "version": "0.1.2"
 }
