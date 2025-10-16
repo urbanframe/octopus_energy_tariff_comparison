@@ -329,6 +329,17 @@ Each cost sensor shows:
 - **Unit**: kWh
 - **Precision**: 3 decimal places
 
+### Current Flexible Rate Sensor
+
+- **State**: Current Flexible Octopus rate
+- **Unit**: p/kWh (pence per kilowatt-hour)
+- **Precision**: 2 decimal places
+
+- **Attributes**:
+
+  - `rate_gbp`: Rate converted to GBP/kWh
+  - `tariff_type`: "Flexible Octopus"
+
 ### Diagnostic Sensors
 - **Current Tariff**: Shows your current tariff name
 - **Number of Readings**: Count of half-hourly readings received
