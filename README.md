@@ -104,7 +104,7 @@ And the following event entities with rate data:
 ```yaml
 type: sections
 max_columns: 2
-title: agile test
+title: "Octopus Comparison "
 path: agile-test
 sections:
   - type: grid
@@ -167,8 +167,7 @@ sections:
               return entity.attributes.rates.map((entry) => {
               return [new Date(entry.start), entry.value_inc_vat * 100];
               });
-            offset: "-15min"
-          - entity: sensor.octopus_flex_rate
+          - entity: sensor.current_flexible_rate
             opacity: 0.5
             stroke_width: 2
             stroke_dash: 6
@@ -234,7 +233,7 @@ sections:
               return [new Date(entry.start), entry.value_inc_vat * 100];
               });
             offset: "-15min"
-          - entity: sensor.octopus_flex_rate
+          - entity: sensor.current_flexible_rate
             opacity: 0.5
             stroke_width: 2
             stroke_dash: 6
@@ -300,7 +299,7 @@ sections:
               return [new Date(entry.start), entry.value_inc_vat * 100];
               });
             offset: "-15min"
-          - entity: sensor.octopus_flex_rate
+          - entity: sensor.current_flexible_rate
             opacity: 0.5
             stroke_width: 2
             stroke_dash: 6
@@ -312,7 +311,7 @@ sections:
   - type: grid
     cards: []
 cards: []
-
+icon: mdi:file-compare
 ```
 
 
