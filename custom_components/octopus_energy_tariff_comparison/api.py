@@ -368,6 +368,12 @@ class OctopusEnergyAPI:
                     # Store rates for event entities
                     tariff_rates[tariff_key] = self._format_rates_for_event(unit_rates)
                     
+                    # Store current rate for Flexible Octopus
+                    if tariff == "Flexible Octopus":
+                        current_flexible_rate = self._get_current_rate(unit_rates)
+                        if current_flexible_rate is not None:
+                            tariff_costs["current_flexible_rate"] = current_flexible_rate
+                    
                 except Exception as e:
                     _LOGGER.error("Error analyzing %s: %s", tariff, e)
             
@@ -473,3 +479,43 @@ class OctopusEnergyAPI:
         
         # Return in chronological order (earliest first)
         return formatted_rates
+
+    def _get_current_rate(self, unit_rates: List[Dict]) -> float:
+        """Get the current rate from unit rates, preferring DIRECT_DEBIT with valid_to=null."""
+        from datetime import datetime, timezone
+        
+        if not unit_rates:
+            return None
+        
+        now = datetime.now(timezone.utc).isoformat()
+        
+        # Filter for DIRECT_DEBIT rates with valid_to=null (current ongoing rate)
+        current_rates = [
+            r for r in unit_rates 
+            if r.get("payment_method") == "DIRECT_DEBIT" 
+            and r.get("valid_to") is None
+            and r.get("valid_from") <= now
+        ]
+        
+        # If found, use the most recent one
+        if current_rates:
+            # Sort by valid_from descending to get the most recent
+            current_rates.sort(key=lambda x: x["valid_from"], reverse=True)
+            return round(float(current_rates[0]["value_inc_vat"]), 2)  # Return in pence
+        
+        # Fallback: find any valid rate for now
+        valid_rates = [
+            r for r in unit_rates
+            if r.get("valid_from") <= now
+            and (r.get("valid_to") is None or r.get("valid_to") > now)
+        ]
+        
+        if valid_rates:
+            # Prefer DIRECT_DEBIT, then sort by valid_from
+            valid_rates.sort(key=lambda x: (
+                x.get("payment_method") != "DIRECT_DEBIT",
+                -1 if x.get("valid_from") else 0
+            ), reverse=True)
+            return round(float(valid_rates[0]["value_inc_vat"]), 2)  # Return in pence
+        
+        return None
