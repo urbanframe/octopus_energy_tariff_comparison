@@ -29,6 +29,7 @@ async def async_setup_entry(
         OctopusCurrentTariffSensor(coordinator),
         OctopusTotalConsumptionSensor(coordinator),
         OctopusReadingsCountSensor(coordinator),
+        OctopusCurrentFlexibleRateSensor(coordinator),
         OctopusAgileCostSensor(coordinator),
         OctopusGoCostSensor(coordinator),
         OctopusCosyCostSensor(coordinator),
@@ -108,6 +109,41 @@ class OctopusReadingsCountSensor(OctopusBaseSensor):
     def icon(self) -> str:
         """Return the icon of the sensor."""
         return "mdi:counter"
+
+
+class OctopusCurrentFlexibleRateSensor(OctopusBaseSensor):
+    """Current Flexible Octopus rate sensor."""
+
+    def __init__(self, coordinator: OctopusEnergyCoordinator) -> None:
+        """Initialize the sensor."""
+        super().__init__(coordinator, "current_flexible_rate", "Current Flexible Rate")
+        self._attr_device_class = SensorDeviceClass.MONETARY
+        self._attr_state_class = SensorStateClass.MEASUREMENT
+        self._attr_native_unit_of_measurement = "p/kWh"
+        self._attr_suggested_display_precision = 2
+
+    @property
+    def native_value(self) -> float | None:
+        """Return the state of the sensor."""
+        if self.coordinator.data:
+            return self.coordinator.data.get("current_flexible_rate")
+        return None
+
+    @property
+    def icon(self) -> str:
+        """Return the icon of the sensor."""
+        return "mdi:flash"
+
+    @property
+    def extra_state_attributes(self) -> dict:
+        """Return extra state attributes."""
+        if self.coordinator.data and "current_flexible_rate" in self.coordinator.data:
+            rate_pence = self.coordinator.data.get("current_flexible_rate", 0)
+            return {
+                "rate_gbp": round(rate_pence / 100, 2),
+                "tariff_type": "Flexible Octopus"
+            }
+        return {}
 
 
 class OctopusAgileCostSensor(OctopusBaseSensor):
