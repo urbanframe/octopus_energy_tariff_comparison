@@ -175,15 +175,29 @@ class OctopusEnergyAPI:
         }
 
     def _get_consumption_data(self, device_id: str, kraken_token: str) -> Tuple[List[Dict], date]:
-        """Get consumption data for today."""
-        today = date.today()
+        """Get consumption data for today (UK time)."""
+        from datetime import datetime, timezone
+        from zoneinfo import ZoneInfo
+        
+        # Get current time in UK timezone
+        uk_tz = ZoneInfo("Europe/London")
+        now_uk = datetime.now(uk_tz)
+        today_uk = now_uk.date()
+        
+        # Create start and end times for today in UK time
+        start_of_day_uk = datetime(today_uk.year, today_uk.month, today_uk.day, 0, 0, 0, tzinfo=uk_tz)
+        end_of_day_uk = datetime(today_uk.year, today_uk.month, today_uk.day, 23, 59, 59, tzinfo=uk_tz)
+        
+        # Convert to UTC for API request
+        start_utc = start_of_day_uk.astimezone(timezone.utc)
+        end_utc = end_of_day_uk.astimezone(timezone.utc)
         
         query = f"""query {{
             smartMeterTelemetry(
                 deviceId: "{device_id}"
                 grouping: HALF_HOURLY
-                start: "{today}T00:00:00Z"
-                end: "{today}T23:59:59Z"
+                start: "{start_utc.strftime('%Y-%m-%dT%H:%M:%SZ')}"
+                end: "{end_utc.strftime('%Y-%m-%dT%H:%M:%SZ')}"
             ) {{
                 readAt
                 consumptionDelta
@@ -194,7 +208,7 @@ class OctopusEnergyAPI:
         result = self._execute_graphql_query(query, kraken_token)
         consumption = result.get("smartMeterTelemetry", [])
         
-        return consumption, today
+        return consumption, today_uk
 
     def _identify_current_tariff(self, tariff_code: str) -> str:
         """Identify the current tariff from tariff code."""
@@ -212,8 +226,9 @@ class OctopusEnergyAPI:
             return f"Other tariff: {tariff_code}"
 
     def _get_potential_tariff_rates(self, tariff: str, region_code: str, analysis_date: date) -> Tuple[float, List[Dict], str]:
-        """Get tariff rates for a specific tariff and region using REST API."""
-        from datetime import timedelta
+        """Get tariff rates for a specific tariff and region using REST API (UK timezone)."""
+        from datetime import datetime, timedelta, timezone
+        from zoneinfo import ZoneInfo
         
         try:
             all_products = self._rest_query(f"{REST_BASE_URL}/products/?brand=OCTOPUS_ENERGY&is_business=false")
@@ -272,9 +287,22 @@ class OctopusEnergyAPI:
             if not unit_rates_link:
                 raise ValueError(f"Standard unit rates link not found for region: {region_code_key}")
             
-            # Get rates for today and tomorrow
-            tomorrow = analysis_date + timedelta(days=1)
-            unit_rates_link_with_time = f"{unit_rates_link}?period_from={analysis_date}T00:00:00Z&period_to={tomorrow}T23:59:59Z"
+            # Convert analysis_date to UK timezone for proper date boundaries
+            uk_tz = ZoneInfo("Europe/London")
+            start_of_day_uk = datetime(analysis_date.year, analysis_date.month, analysis_date.day, 0, 0, 0, tzinfo=uk_tz)
+            
+            # Get rates from start of today to end of tomorrow (UK time)
+            # We need tomorrow's rates for the event entities
+            end_of_tomorrow_uk = start_of_day_uk + timedelta(days=2)
+            
+            # Convert to UTC for API request
+            start_utc = start_of_day_uk.astimezone(timezone.utc)
+            end_utc = end_of_tomorrow_uk.astimezone(timezone.utc)
+            
+            _LOGGER.debug(f"Fetching rates from {start_utc} to {end_utc} (UK: {start_of_day_uk} to {end_of_tomorrow_uk})")
+            
+            # Get rates for today and tomorrow (UK time)
+            unit_rates_link_with_time = f"{unit_rates_link}?period_from={start_utc.strftime('%Y-%m-%dT%H:%M:%SZ')}&period_to={end_utc.strftime('%Y-%m-%dT%H:%M:%SZ')}"
             unit_rates = self._rest_query(unit_rates_link_with_time)
             
             return standing_charge_inc_vat, unit_rates.get("results", []), product["code"]
@@ -283,43 +311,83 @@ class OctopusEnergyAPI:
             _LOGGER.error("Error fetching tariff rates for %s: %s", tariff, e)
             raise
 
-    def _calculate_cost_for_consumption(self, consumption_data: list, unit_rates: list, standing_charge: float) -> float:
-        """Calculate the total cost for given consumption and rates."""
+    def _calculate_cost_for_consumption(self, consumption_data: list, unit_rates: list, standing_charge: float, analysis_date: date) -> float:
+        """Calculate the total cost for given consumption and rates (UK timezone aware)."""
+        from datetime import datetime, timedelta, timezone
+        from zoneinfo import ZoneInfo
+        
         total_energy_cost = 0.0
+        
+        # Get UK timezone boundaries for the analysis date
+        uk_tz = ZoneInfo("Europe/London")
+        start_of_day_uk = datetime(analysis_date.year, analysis_date.month, analysis_date.day, 0, 0, 0, tzinfo=uk_tz)
+        end_of_day_uk = start_of_day_uk + timedelta(days=1)
+        
+        # Convert to UTC for comparison
+        start_of_day_utc = start_of_day_uk.astimezone(timezone.utc).isoformat().replace('+00:00', 'Z')
+        end_of_day_utc = end_of_day_uk.astimezone(timezone.utc).isoformat().replace('+00:00', 'Z')
+        
+        # Filter rates to only those that apply to TODAY in UK time
+        # A rate applies if it started before the end of today
+        applicable_rates = []
+        for rate in unit_rates:
+            valid_from = rate.get("valid_from")
+            valid_to = rate.get("valid_to")
+            
+            # Only include DIRECT_DEBIT rates
+            if rate.get("payment_method") != "DIRECT_DEBIT":
+                continue
+            
+            # Rate must have started before end of today
+            if valid_from and valid_from < end_of_day_utc:
+                # Rate must still be valid (no valid_to, or valid_to is after start of today)
+                if valid_to is None or valid_to > start_of_day_utc:
+                    applicable_rates.append(rate)
+        
+        # If no DIRECT_DEBIT rates, fall back to any rates
+        if not applicable_rates:
+            applicable_rates = [r for r in unit_rates if r.get("valid_from", "") < end_of_day_utc]
         
         # Create a mapping of time periods to rates
         rate_map = {}
-        for rate in unit_rates:
-            rate_map[rate["valid_from"]] = float(rate["value_inc_vat"])
+        for rate in applicable_rates:
+            valid_from = rate["valid_from"]
+            # If multiple rates for same time, prefer DIRECT_DEBIT
+            if valid_from not in rate_map or rate.get("payment_method") == "DIRECT_DEBIT":
+                rate_map[valid_from] = float(rate["value_inc_vat"])
         
-        # Sort rates by time (most recent first)
-        sorted_rates = sorted(rate_map.items(), reverse=True)
+        # Sort rates by time (earliest first)
+        sorted_rates = sorted(rate_map.items())
         
+        # Process each consumption reading
         for reading in consumption_data:
             try:
                 consumption_kwh = float(reading["consumptionDelta"]) / 1000
             except (TypeError, ValueError):
                 consumption_kwh = 0.0
             
-            read_time = reading["readAt"]
-            
             if consumption_kwh == 0:
                 continue
             
-            # Find the matching rate for this time period
+            read_time = reading["readAt"]
+            
+            # Find the rate that applies to this reading
+            # Use the most recent rate that started before or at the reading time
             matching_rate = None
-            for rate_time, rate_value in sorted_rates:
+            for rate_time, rate_value in reversed(sorted_rates):
                 if rate_time <= read_time:
                     matching_rate = rate_value
                     break
             
+            # Fallback to first rate if no match
             if matching_rate is None and sorted_rates:
-                matching_rate = sorted_rates[-1][1]
+                matching_rate = sorted_rates[0][1]
             
             if matching_rate is not None:
-                total_energy_cost += consumption_kwh * float(matching_rate)
+                cost = consumption_kwh * float(matching_rate)
+                total_energy_cost += cost
         
-        # Add daily standing charge and convert to pence
+        # Add daily standing charge (in pence) to get total cost in pence
         total_cost = total_energy_cost + float(standing_charge)
         
         return total_cost
@@ -346,6 +414,9 @@ class OctopusEnergyAPI:
             # Calculate total consumption
             total_consumption = sum(float(reading.get("consumptionDelta", 0) or 0) / 1000 for reading in consumption_data)
             
+            _LOGGER.info(f"Processing data for {analysis_date} (UK time)")
+            _LOGGER.info(f"Total consumption: {total_consumption}kWh from {len(consumption_data)} readings")
+            
             # Compare costs across tariffs and collect rates
             tariff_costs = {}
             tariff_rates = {}
@@ -355,15 +426,19 @@ class OctopusEnergyAPI:
                     standing_charge, unit_rates, product_code = self._get_potential_tariff_rates(
                         tariff, account_info["region_code"], analysis_date)
                     
+                    _LOGGER.info(f"{tariff}: Fetched {len(unit_rates)} rate periods, standing charge: {standing_charge}p")
+                    
                     if not unit_rates:
                         _LOGGER.warning("No rate data available for %s on %s", tariff, analysis_date)
                         continue
                     
                     total_cost = self._calculate_cost_for_consumption(
-                        consumption_data, unit_rates, standing_charge)
+                        consumption_data, unit_rates, standing_charge, analysis_date)
                     
                     tariff_key = tariff.lower().replace(" ", "_")
                     tariff_costs[tariff_key] = total_cost
+                    
+                    _LOGGER.info(f"{tariff}: Total cost = {total_cost}p (energy: {total_cost - standing_charge}p + standing: {standing_charge}p)")
                     
                     # Store rates for event entities
                     tariff_rates[tariff_key] = self._format_rates_for_event(unit_rates)
@@ -375,7 +450,7 @@ class OctopusEnergyAPI:
                             tariff_costs["current_flexible_rate"] = current_flexible_rate
                     
                 except Exception as e:
-                    _LOGGER.error("Error analyzing %s: %s", tariff, e)
+                    _LOGGER.error("Error analyzing %s: %s", tariff, e, exc_info=True)
             
             return {
                 "current_tariff_name": current_tariff_name,
@@ -386,7 +461,7 @@ class OctopusEnergyAPI:
             }
             
         except Exception as e:
-            _LOGGER.error("Error getting tariff data: %s", e)
+            _LOGGER.error("Error getting tariff data: %s", e, exc_info=True)
             raise
 
     def _format_rates_for_event(self, unit_rates: List[Dict]) -> List[Dict]:
