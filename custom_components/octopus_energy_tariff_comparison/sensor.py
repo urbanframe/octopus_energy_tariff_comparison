@@ -140,7 +140,7 @@ class OctopusCurrentFlexibleRateSensor(OctopusBaseSensor):
         if self.coordinator.data and "current_flexible_rate" in self.coordinator.data:
             rate_pence = self.coordinator.data.get("current_flexible_rate", 0)
             return {
-                "rate_gbp": round(rate_pence / 100, 2),
+                "rate_gbp": round(rate_pence / 100, 4),
                 "tariff_type": "Flexible Octopus"
             }
         return {}
@@ -154,14 +154,16 @@ class OctopusAgileCostSensor(OctopusBaseSensor):
         super().__init__(coordinator, "agile_octopus_cost", "Agile Octopus Cost Today")
         self._attr_device_class = SensorDeviceClass.MONETARY
         self._attr_state_class = SensorStateClass.TOTAL
-        self._attr_native_unit_of_measurement = "p"
+        self._attr_native_unit_of_measurement = "GBP"
         self._attr_suggested_display_precision = 2
 
     @property
     def native_value(self) -> float | None:
         """Return the state of the sensor."""
         if self.coordinator.data:
-            return self.coordinator.data.get("agile_octopus")
+            cost_pence = self.coordinator.data.get("agile_octopus")
+            if cost_pence is not None:
+                return round(cost_pence / 100, 2)
         return None
 
     @property
@@ -175,7 +177,7 @@ class OctopusAgileCostSensor(OctopusBaseSensor):
         if self.coordinator.data and "agile_octopus" in self.coordinator.data:
             cost_pence = self.coordinator.data.get("agile_octopus", 0)
             return {
-                "cost_pounds": round(cost_pence / 100, 2),
+                "cost_pence": round(cost_pence, 2),
                 "tariff_type": "Agile Octopus"
             }
         return {}
@@ -189,14 +191,16 @@ class OctopusGoCostSensor(OctopusBaseSensor):
         super().__init__(coordinator, "octopus_go_cost", "Octopus Go Cost Today")
         self._attr_device_class = SensorDeviceClass.MONETARY
         self._attr_state_class = SensorStateClass.TOTAL
-        self._attr_native_unit_of_measurement = "p"
+        self._attr_native_unit_of_measurement = "GBP"
         self._attr_suggested_display_precision = 2
 
     @property
     def native_value(self) -> float | None:
         """Return the state of the sensor."""
         if self.coordinator.data:
-            return self.coordinator.data.get("octopus_go")
+            cost_pence = self.coordinator.data.get("octopus_go")
+            if cost_pence is not None:
+                return round(cost_pence / 100, 2)
         return None
 
     @property
@@ -210,7 +214,7 @@ class OctopusGoCostSensor(OctopusBaseSensor):
         if self.coordinator.data and "octopus_go" in self.coordinator.data:
             cost_pence = self.coordinator.data.get("octopus_go", 0)
             return {
-                "cost_pounds": round(cost_pence / 100, 2),
+                "cost_pence": round(cost_pence, 2),
                 "tariff_type": "Octopus Go"
             }
         return {}
@@ -224,14 +228,16 @@ class OctopusCosyCostSensor(OctopusBaseSensor):
         super().__init__(coordinator, "cosy_octopus_cost", "Cosy Octopus Cost Today")
         self._attr_device_class = SensorDeviceClass.MONETARY
         self._attr_state_class = SensorStateClass.TOTAL
-        self._attr_native_unit_of_measurement = "p"
+        self._attr_native_unit_of_measurement = "GBP"
         self._attr_suggested_display_precision = 2
 
     @property
     def native_value(self) -> float | None:
         """Return the state of the sensor."""
         if self.coordinator.data:
-            return self.coordinator.data.get("cosy_octopus")
+            cost_pence = self.coordinator.data.get("cosy_octopus")
+            if cost_pence is not None:
+                return round(cost_pence / 100, 2)
         return None
 
     @property
@@ -245,7 +251,7 @@ class OctopusCosyCostSensor(OctopusBaseSensor):
         if self.coordinator.data and "cosy_octopus" in self.coordinator.data:
             cost_pence = self.coordinator.data.get("cosy_octopus", 0)
             return {
-                "cost_pounds": round(cost_pence / 100, 2),
+                "cost_pence": round(cost_pence, 2),
                 "tariff_type": "Cosy Octopus"
             }
         return {}
@@ -259,14 +265,16 @@ class OctopusFlexibleCostSensor(OctopusBaseSensor):
         super().__init__(coordinator, "flexible_octopus_cost", "Flexible Octopus Cost Today")
         self._attr_device_class = SensorDeviceClass.MONETARY
         self._attr_state_class = SensorStateClass.TOTAL
-        self._attr_native_unit_of_measurement = "p"
+        self._attr_native_unit_of_measurement = "GBP"
         self._attr_suggested_display_precision = 2
 
     @property
     def native_value(self) -> float | None:
         """Return the state of the sensor."""
         if self.coordinator.data:
-            return self.coordinator.data.get("flexible_octopus")
+            cost_pence = self.coordinator.data.get("flexible_octopus")
+            if cost_pence is not None:
+                return round(cost_pence / 100, 2)
         return None
 
     @property
@@ -280,7 +288,7 @@ class OctopusFlexibleCostSensor(OctopusBaseSensor):
         if self.coordinator.data and "flexible_octopus" in self.coordinator.data:
             cost_pence = self.coordinator.data.get("flexible_octopus", 0)
             return {
-                "cost_pounds": round(cost_pence / 100, 2),
+                "cost_pence": round(cost_pence, 2),
                 "tariff_type": "Flexible Octopus"
             }
         return {}
