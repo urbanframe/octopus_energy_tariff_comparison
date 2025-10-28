@@ -17,7 +17,7 @@ entities:
   - entity: sensor.cosy_octopus_cost_today
   - entity: sensor.octopus_go_cost_today
   - entity: sensor.flexible_octopus_cost_today
-hours_to_show: 48
+hours_to_show: 72
 ```
 ## Requirements
 
