@@ -44,6 +44,8 @@ And the following event entities with rate data:
 
 ### HACS Installation
 
+[![Open your Home Assistant instance and open a repository inside the Home Assistant Community Store.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=urbanframe&repository=octopus_energy_tariff_comparison&category=integration)
+
 1. Add this repository as a custom repository in HACS
 2. Install "Octopus Energy Tariff Comparison" 
 3. Restart Home Assistant
