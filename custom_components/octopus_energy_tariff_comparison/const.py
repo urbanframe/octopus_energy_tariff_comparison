@@ -14,7 +14,7 @@ GRAPHQL_URL = "https://api.octopus.energy/v1/graphql/"
 REST_BASE_URL = "https://api.octopus.energy/v1"
 
 # Update interval (every 30 minutes)
-UPDATE_INTERVAL = 30
+UPDATE_INTERVAL = 5
 
 # Tariffs to compare
 TARIFFS_TO_COMPARE = [
