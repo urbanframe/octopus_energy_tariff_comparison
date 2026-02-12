@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import base64
 import logging
-from datetime import date, datetime
+from datetime import date, datetime, time
 from typing import Any, Dict, List, Tuple
 
 import requests
@@ -16,10 +16,77 @@ _LOGGER = logging.getLogger(__name__)
 class OctopusEnergyAPI:
     """API client for Octopus Energy."""
 
+    # Time-of-day tariff schedules (in UK local time)
+    # Go tariff: cheap rate from 00:30 to 05:30
+    GO_NIGHT_START = time(0, 30)
+    GO_NIGHT_END = time(5, 30)
+    
+    # Cosy tariff: three cheap periods
+    COSY_PERIODS = [
+        (time(4, 0), time(7, 0)),    # 04:00-07:00
+        (time(13, 0), time(16, 0)),  # 13:00-16:00  
+        (time(22, 0), time(0, 0)),   # 22:00-00:00 (crosses midnight)
+    ]
+    COSY_PEAK_START = time(16, 0)
+    COSY_PEAK_END = time(19, 0)
+
     def __init__(self, config: dict[str, str]) -> None:
         """Initialize the API client."""
         self.config = config
         self._kraken_token = None
+
+    def _is_time_in_period(self, check_time: time, start: time, end: time) -> bool:
+        """Check if a time falls within a period, handling midnight crossover."""
+        if start < end:
+            # Simple case: period doesn't cross midnight
+            return start <= check_time < end
+        else:
+            # Period crosses midnight (e.g., 22:00 to 00:00)
+            return check_time >= start or check_time < end
+    
+    def _get_go_rate_for_time(self, dt: datetime, day_rate: float, night_rate: float) -> float:
+        """
+        Get the applicable Go tariff rate for a specific datetime.
+        
+        Args:
+            dt: Datetime in UK timezone
+            day_rate: Day rate in pence/kWh
+            night_rate: Night rate in pence/kWh
+            
+        Returns:
+            Applicable rate in pence/kWh
+        """
+        t = dt.time()
+        if self._is_time_in_period(t, self.GO_NIGHT_START, self.GO_NIGHT_END):
+            return night_rate
+        return day_rate
+    
+    def _get_cosy_rate_for_time(self, dt: datetime, day_rate: float, cosy_rate: float, peak_rate: float) -> float:
+        """
+        Get the applicable Cosy tariff rate for a specific datetime.
+        
+        Args:
+            dt: Datetime in UK timezone
+            day_rate: Standard day rate in pence/kWh
+            cosy_rate: Cosy period rate in pence/kWh
+            peak_rate: Peak period rate in pence/kWh
+            
+        Returns:
+            Applicable rate in pence/kWh
+        """
+        t = dt.time()
+        
+        # Check if in peak period
+        if self._is_time_in_period(t, self.COSY_PEAK_START, self.COSY_PEAK_END):
+            return peak_rate
+        
+        # Check if in any cosy period
+        for start, end in self.COSY_PERIODS:
+            if self._is_time_in_period(t, start, end):
+                return cosy_rate
+        
+        # Otherwise, use day rate
+        return day_rate
 
     def test_connection(self) -> bool:
         """Test the connection to the API."""
@@ -311,53 +378,95 @@ class OctopusEnergyAPI:
             _LOGGER.error("Error fetching tariff rates for %s: %s", tariff, e)
             raise
 
-    def _calculate_cost_for_consumption(self, consumption_data: list, unit_rates: list, standing_charge: float, analysis_date: date) -> float:
+    def _calculate_cost_for_consumption(self, consumption_data: list, unit_rates: list, standing_charge: float, analysis_date: date, tariff_name: str = None) -> float:
         """Calculate the total cost for given consumption and rates (UK timezone aware)."""
         from datetime import datetime, timedelta, timezone
         from zoneinfo import ZoneInfo
         
         total_energy_cost = 0.0
-        
-        # Get UK timezone boundaries for the analysis date
         uk_tz = ZoneInfo("Europe/London")
-        start_of_day_uk = datetime(analysis_date.year, analysis_date.month, analysis_date.day, 0, 0, 0, tzinfo=uk_tz)
-        end_of_day_uk = start_of_day_uk + timedelta(days=1)
         
-        # Convert to UTC for comparison
-        start_of_day_utc = start_of_day_uk.astimezone(timezone.utc).isoformat().replace('+00:00', 'Z')
-        end_of_day_utc = end_of_day_uk.astimezone(timezone.utc).isoformat().replace('+00:00', 'Z')
+        # Determine if this is a time-of-day tariff
+        is_go_tariff = tariff_name and "go" in tariff_name.lower() and "agile" not in tariff_name.lower()
+        is_cosy_tariff = tariff_name and "cosy" in tariff_name.lower()
+        is_time_of_day_tariff = is_go_tariff or is_cosy_tariff
         
-        # Filter rates to only those that apply to TODAY in UK time
-        # A rate applies if it started before the end of today
-        applicable_rates = []
-        for rate in unit_rates:
-            valid_from = rate.get("valid_from")
-            valid_to = rate.get("valid_to")
+        if is_time_of_day_tariff:
+            # For Go and Cosy tariffs: Extract the different rate tiers from API response
+            # These tariffs return 2-4 rates total, not half-hourly rates
             
-            # Only include DIRECT_DEBIT rates
-            if rate.get("payment_method") != "DIRECT_DEBIT":
-                continue
+            # Filter for DIRECT_DEBIT rates
+            dd_rates = [r for r in unit_rates if r.get("payment_method") == "DIRECT_DEBIT"]
+            if not dd_rates:
+                dd_rates = unit_rates
             
-            # Rate must have started before end of today
-            if valid_from and valid_from < end_of_day_utc:
-                # Rate must still be valid (no valid_to, or valid_to is after start of today)
-                if valid_to is None or valid_to > start_of_day_utc:
-                    applicable_rates.append(rate)
+            # Extract unique rate values
+            rate_values = sorted(set(float(r["value_inc_vat"]) for r in dd_rates))
+            
+            if is_go_tariff:
+                # Go has 2 rates: night (cheap) and day (expensive)
+                if len(rate_values) < 2:
+                    _LOGGER.error(f"Expected 2 rates for Go tariff, got {len(rate_values)}: {rate_values}")
+                    # Fallback to generic calculation
+                    is_time_of_day_tariff = False
+                else:
+                    night_rate = min(rate_values)  # Cheapest is night rate
+                    day_rate = max(rate_values)    # Most expensive is day rate
+                    
+                    _LOGGER.info(f"Go tariff rates: night={night_rate}p/kWh, day={day_rate}p/kWh (period: {self.GO_NIGHT_START.strftime('%H:%M')}-{self.GO_NIGHT_END.strftime('%H:%M')})")
+            
+            elif is_cosy_tariff:
+                # Cosy has 3 rates: cosy (cheap), day (medium), peak (expensive)
+                if len(rate_values) < 3:
+                    _LOGGER.error(f"Expected 3 rates for Cosy tariff, got {len(rate_values)}: {rate_values}")
+                    is_time_of_day_tariff = False
+                else:
+                    rate_values_sorted = sorted(rate_values)
+                    cosy_rate = rate_values_sorted[0]  # Cheapest
+                    day_rate = rate_values_sorted[1]   # Middle
+                    peak_rate = rate_values_sorted[2]  # Most expensive
+                    
+                    _LOGGER.info(f"Cosy tariff rates: cosy={cosy_rate}p/kWh, day={day_rate}p/kWh, peak={peak_rate}p/kWh")
         
-        # If no DIRECT_DEBIT rates, fall back to any rates
-        if not applicable_rates:
-            applicable_rates = [r for r in unit_rates if r.get("valid_from", "") < end_of_day_utc]
-        
-        # Create a mapping of time periods to rates
-        rate_map = {}
-        for rate in applicable_rates:
-            valid_from = rate["valid_from"]
-            # If multiple rates for same time, prefer DIRECT_DEBIT
-            if valid_from not in rate_map or rate.get("payment_method") == "DIRECT_DEBIT":
-                rate_map[valid_from] = float(rate["value_inc_vat"])
-        
-        # Sort rates by time (earliest first)
-        sorted_rates = sorted(rate_map.items())
+        # For Agile/Flexible: prepare rate data once before processing readings
+        if not is_time_of_day_tariff:
+            # Get UK timezone boundaries for the analysis date
+            start_of_day_uk = datetime(analysis_date.year, analysis_date.month, analysis_date.day, 0, 0, 0, tzinfo=uk_tz)
+            end_of_day_uk = start_of_day_uk + timedelta(days=1)
+            
+            # Convert to UTC for comparison
+            start_of_day_utc = start_of_day_uk.astimezone(timezone.utc).isoformat().replace('+00:00', 'Z')
+            end_of_day_utc = end_of_day_uk.astimezone(timezone.utc).isoformat().replace('+00:00', 'Z')
+            
+            # Filter rates to only those that apply to TODAY in UK time
+            applicable_rates = []
+            for rate in unit_rates:
+                valid_from = rate.get("valid_from")
+                valid_to = rate.get("valid_to")
+                
+                # Only include DIRECT_DEBIT rates
+                if rate.get("payment_method") != "DIRECT_DEBIT":
+                    continue
+                
+                # Rate must have started before end of today
+                if valid_from and valid_from < end_of_day_utc:
+                    # Rate must still be valid (no valid_to, or valid_to is after start of today)
+                    if valid_to is None or valid_to > start_of_day_utc:
+                        applicable_rates.append(rate)
+            
+            # If no DIRECT_DEBIT rates, fall back to any rates
+            if not applicable_rates:
+                applicable_rates = [r for r in unit_rates if r.get("valid_from", "") < end_of_day_utc]
+            
+            # Create a mapping of time periods to rates
+            rate_map = {}
+            for rate in applicable_rates:
+                valid_from = rate["valid_from"]
+                if valid_from not in rate_map or rate.get("payment_method") == "DIRECT_DEBIT":
+                    rate_map[valid_from] = float(rate["value_inc_vat"])
+            
+            # Sort rates by time (earliest first)
+            sorted_rates = sorted(rate_map.items())
         
         # Process each consumption reading
         for reading in consumption_data:
@@ -369,19 +478,32 @@ class OctopusEnergyAPI:
             if consumption_kwh == 0:
                 continue
             
-            read_time = reading["readAt"]
+            read_time_str = reading["readAt"]
+            read_time_utc = datetime.fromisoformat(read_time_str.replace('Z', '+00:00'))
+            read_time_uk = read_time_utc.astimezone(uk_tz)
             
-            # Find the rate that applies to this reading
-            # Use the most recent rate that started before or at the reading time
-            matching_rate = None
-            for rate_time, rate_value in reversed(sorted_rates):
-                if rate_time <= read_time:
-                    matching_rate = rate_value
-                    break
-            
-            # Fallback to first rate if no match
-            if matching_rate is None and sorted_rates:
-                matching_rate = sorted_rates[0][1]
+            # Get the applicable rate
+            if is_time_of_day_tariff:
+                # Use time-of-day logic
+                if is_go_tariff:
+                    matching_rate = self._get_go_rate_for_time(read_time_uk, day_rate, night_rate)
+                elif is_cosy_tariff:
+                    matching_rate = self._get_cosy_rate_for_time(read_time_uk, day_rate, cosy_rate, peak_rate)
+                else:
+                    matching_rate = None
+            else:
+                # For Agile and Flexible: use timestamp-based matching
+                # Find the rate that applies to this reading
+                # Use < not <= because readAt is end of consumption period
+                matching_rate = None
+                for rate_time, rate_value in reversed(sorted_rates):
+                    if rate_time < read_time_str:
+                        matching_rate = rate_value
+                        break
+                
+                # Fallback to first rate if no match
+                if matching_rate is None and sorted_rates:
+                    matching_rate = sorted_rates[0][1]
             
             if matching_rate is not None:
                 cost = consumption_kwh * float(matching_rate)
@@ -433,7 +555,7 @@ class OctopusEnergyAPI:
                         continue
                     
                     total_cost = self._calculate_cost_for_consumption(
-                        consumption_data, unit_rates, standing_charge, analysis_date)
+                        consumption_data, unit_rates, standing_charge, analysis_date, tariff)
                     
                     tariff_key = tariff.lower().replace(" ", "_")
                     tariff_costs[tariff_key] = total_cost
