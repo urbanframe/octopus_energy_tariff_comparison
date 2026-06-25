@@ -60,8 +60,17 @@ And the following event entities with rate data:
    - **Account Number**: Your Octopus account number (e.g., A-EDF238B3)
    - **API Key**: Your Octopus Energy API key (get from your account dashboard)
    - **MPAN**: Your electricity meter MPAN number
-   - **Serial Number**: Your smart meter serial number
    - **Region Code**: Your electricity region code (A-P, typically found at the end of your tariff code)
+
+### Changing your account details later
+
+If any of your account details change (for example, you regenerate your API key), you can edit them without removing and re-adding the integration:
+
+1. Go to **Settings** → **Devices & Services**
+2. Find **Octopus Energy Tariff Comparison**, click the three-dot menu and choose **Reconfigure**
+3. The form opens pre-filled with your current details — amend what you need and click **Submit**
+
+The integration validates the new details and reloads automatically. Note that the account number must stay the same as the originally configured account; to track a different account, add a separate integration entry instead.
 
 ## Getting Your API Key
 
@@ -73,7 +82,6 @@ And the following event entities with rate data:
 ## Finding Your Details
 
 - **MPAN**: Found on your electricity bill (13-digit number)
-- **Serial Number**: Found on your smart meter or bill
 - **Region Code**: Usually the last letter of your current tariff code, or check your postcode area:
   - A: Eastern England
   - B: East Midlands  
@@ -92,9 +100,20 @@ And the following event entities with rate data:
 
 ## Data Updates
 
-- The integration polls the Octopus Energy API every 30 minutes
-- Cost calculations are based on your current day's consumption
-- All costs include VAT
+The integration uses two separate update cadences:
+
+- **Consumption and cost figures** refresh on a configurable interval (default **5 minutes**). This drives your usage, total consumption, and the per-tariff cost-so-far calculations. You can change this interval in the integration's **Options** (see below).
+- **Half-hourly rates** are fetched only **once a day**. Octopus publishes the next day's 48 half-hourly rates from around 4pm, so the integration makes its first attempt at 4pm and, if the new rates aren't available yet, retries every 30 minutes until they arrive, giving up for the day at 10pm. The rates are then cached, so the frequent consumption polling does **not** generate repeated rate API calls.
+
+This split keeps cost figures responsive while dramatically reducing the number of calls made to the Octopus API. All costs include VAT.
+
+### Changing the update interval
+
+1. Go to **Settings** → **Devices & Services**
+2. Find **Octopus Energy Tariff Comparison** and click **Configure** (the cog icon)
+3. Set the **Consumption update interval** (1–60 minutes) and click **Submit**
+
+The new interval applies immediately without needing a restart. This setting only affects how often consumption and cost figures refresh — it does not change how often the half-hourly rates are fetched, which remains once a day after 4pm.
 
 ## Octopus Energy Rates Card and Apex Chart Dashboard Example
 
@@ -320,9 +339,9 @@ icon: mdi:file-compare
 
 ### Cost Sensors
 Each cost sensor shows:
-- **State**: Cost in pence for today's consumption
-- **Attributes**: 
-  - `cost_pounds`: Cost converted to pounds
+- **State**: Cost in pounds (GBP) for today's consumption
+- **Attributes**:
+  - `cost_pence`: Cost in pence
   - `tariff_type`: The tariff name
 
 ### Consumption Sensor
@@ -359,11 +378,13 @@ Each tariff has an event entity that contains the half-hourly rates as attribute
 
 Each event entity fires a `rates_updated` event when new rate data is received.
 
+> **Note:** The bulky `rates` attribute (up to 96 half-hourly periods per entity) is excluded from the Home Assistant recorder database to avoid bloating history. The data is still fully available live in the entity's current state — so dashboard cards, the `data_generator` examples above, and automations that read `state_attr(...)` all continue to work as normal. Only long-term *history* of the attribute is not stored.
+
 ## Troubleshooting
 
 ### No consumption data
 - Check your smart meter is sending data to Octopus
-- Verify your MPAN and serial number are correct
+- Verify your MPAN is correct
 - Some meters take time to start reporting data
 
 ### API errors
