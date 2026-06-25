@@ -59,15 +59,23 @@ class OctopusRatesEventBase(CoordinatorEntity, EventEntity):
     @callback
     def _handle_coordinator_update(self) -> None:
         """Handle updated data from the coordinator."""
-        if self.coordinator.data and "tariff_rates" in self.coordinator.data:
-            rates = self.coordinator.data["tariff_rates"].get(self.tariff_key)
-            if rates:
-                # Trigger event when rates are updated
-                current_update = str(rates)
-                if current_update != self._last_rates_update:
-                    self._trigger_event("rates_updated", {"rates": rates})
-                    self._last_rates_update = current_update
-                    self.async_write_ha_state()
+        data = self.coordinator.data
+        if not data or "tariff_rates" not in data:
+            return
+
+        rates = data["tariff_rates"].get(self.tariff_key)
+        if not rates:
+            return
+
+        # Fire 'rates_updated' only when the published rates actually change.
+        # We key off a content signature computed when new rates are cached
+        # (changes once a day after ~4pm), NOT off the formatted list — the
+        # formatted list could otherwise appear to change as periods elapse.
+        signature = data.get("rates_signature", {}).get(self.tariff_key)
+        if signature != self._last_rates_update:
+            self._trigger_event("rates_updated", {"rates": rates})
+            self._last_rates_update = signature
+            self.async_write_ha_state()
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:

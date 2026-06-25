@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import base64
+import hashlib
 import logging
 from datetime import date, datetime, time, timedelta, timezone
 from typing import Any, Dict, List, Optional, Tuple
@@ -21,6 +22,21 @@ from .const import (
 UK_TZ = ZoneInfo("Europe/London")
 
 _LOGGER = logging.getLogger(__name__)
+
+
+def _rates_digest(unit_rates: List[Dict]) -> str:
+    """Return a stable, process-independent digest of published rate values.
+
+    Used to detect genuine rate changes (new publication) rather than the mere
+    passage of time. Includes only the fields that define a rate, so it stays
+    constant through the day until Octopus publishes different values.
+    """
+    parts = [
+        f"{r.get('valid_from')}|{r.get('valid_to')}|{r.get('value_inc_vat')}|{r.get('payment_method')}"
+        for r in unit_rates
+    ]
+    joined = ";".join(parts)
+    return hashlib.sha1(joined.encode("utf-8")).hexdigest()
 
 
 class OctopusEnergyAPI:
@@ -57,6 +73,7 @@ class OctopusEnergyAPI:
         # _products_cache:   the /products/ catalogue (fetched once per rate cycle)
         self._rates_cache: Dict[str, Tuple[float, List[Dict], str]] = {}
         self._rates_cache_date: Optional[date] = None
+        self._rates_signature: Dict[str, int] = {}
         self._tomorrow_cached: bool = False
         self._last_rate_attempt: Optional[datetime] = None
         self._products_cache: Optional[List[Dict]] = None
@@ -621,6 +638,7 @@ class OctopusEnergyAPI:
             self._tomorrow_cached = False
             self._last_rate_attempt = None
             self._products_cache = None
+            self._rates_signature = {}
 
         if not self._should_fetch_rates(analysis_date):
             return
@@ -660,6 +678,14 @@ class OctopusEnergyAPI:
         if new_cache:
             self._rates_cache = new_cache
             self._rates_cache_date = analysis_date
+            # Build a per-tariff signature from the raw published values. This
+            # changes only when Octopus actually publishes different rates, so
+            # event entities can use it to fire 'rates_updated' on real changes
+            # only — not when a half-hourly period merely elapses.
+            self._rates_signature = {
+                key: _rates_digest(unit_rates)
+                for key, (_sc, unit_rates, _pc) in new_cache.items()
+            }
 
         # Consider tomorrow "in hand" once the half-hourly rates include it.
         if any_tomorrow:
@@ -743,6 +769,7 @@ class OctopusEnergyAPI:
                 "total_consumption": round(total_consumption, 3),
                 "number_of_readings": len(consumption_data),
                 "tariff_rates": tariff_rates,
+                "rates_signature": dict(self._rates_signature),
                 **tariff_costs
             }
 
@@ -757,30 +784,17 @@ class OctopusEnergyAPI:
         if not unit_rates:
             return []
         
-        # Filter for DIRECT_DEBIT rates that are currently valid (valid_to is null or in the future)
-        now = datetime.now(timezone.utc).isoformat()
-        filtered_rates = []
-        
-        for rate in unit_rates:
-            # Prefer DIRECT_DEBIT, but fallback to any payment method if not available
-            is_direct_debit = rate.get("payment_method") == "DIRECT_DEBIT"
-            valid_to = rate.get("valid_to")
-            valid_from = rate.get("valid_from")
-            
-            # Rate is valid if valid_to is None (ongoing) or in the future
-            is_valid = valid_to is None or valid_to > now
-            
-            # Rate has started
-            has_started = valid_from <= now
-            
-            if is_direct_debit and is_valid:
-                filtered_rates.append(rate)
-        
-        # If no DIRECT_DEBIT rates found, fall back to all valid rates
-        if not filtered_rates:
-            filtered_rates = [r for r in unit_rates if (r.get("valid_to") is None or r.get("valid_to") > now)]
-        
-        # If still no rates, use all rates
+        # Build the set of rates to expose. We deliberately do NOT drop periods
+        # that have already elapsed today: the event attribute is meant to show
+        # the full published schedule for today (and tomorrow when available).
+        # Filtering by "now" caused the list to shrink every half hour, which
+        # both lost earlier periods and made the event re-fire spuriously.
+        # Prefer DIRECT_DEBIT rates; fall back to all rates if none are present.
+        filtered_rates = [
+            r for r in unit_rates if r.get("payment_method") == "DIRECT_DEBIT"
+        ]
+
+        # If no DIRECT_DEBIT rates found, fall back to all rates
         if not filtered_rates:
             filtered_rates = unit_rates
         
