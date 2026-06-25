@@ -3,12 +3,22 @@ from __future__ import annotations
 
 import base64
 import logging
-from datetime import date, datetime, time
-from typing import Any, Dict, List, Tuple
+from datetime import date, datetime, time, timedelta, timezone
+from typing import Any, Dict, List, Optional, Tuple
+from zoneinfo import ZoneInfo
 
 import requests
 
-from .const import GRAPHQL_URL, REST_BASE_URL, TARIFFS_TO_COMPARE
+from .const import (
+    GRAPHQL_URL,
+    REST_BASE_URL,
+    TARIFFS_TO_COMPARE,
+    RATE_WINDOW_START_HOUR,
+    RATE_WINDOW_END_HOUR,
+    RATE_RETRY_MINUTES,
+)
+
+UK_TZ = ZoneInfo("Europe/London")
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -34,6 +44,22 @@ class OctopusEnergyAPI:
         """Initialize the API client."""
         self.config = config
         self._kraken_token = None
+
+        # --- Rate caching state -------------------------------------------
+        # The 48 half-hourly rates change once a day (published ~4pm). We cache
+        # them and only refetch when stale, so the frequent consumption polling
+        # does not trigger rate API calls.
+        #
+        # _rates_cache:    tariff_key -> (standing_charge, unit_rates, product_code)
+        # _rates_cache_date: the UK date the cached rates were fetched for ("today")
+        # _tomorrow_cached:  True once a fetch has returned tomorrow's rates
+        # _last_rate_attempt: datetime (UK) of the most recent rate fetch attempt
+        # _products_cache:   the /products/ catalogue (fetched once per rate cycle)
+        self._rates_cache: Dict[str, Tuple[float, List[Dict], str]] = {}
+        self._rates_cache_date: Optional[date] = None
+        self._tomorrow_cached: bool = False
+        self._last_rate_attempt: Optional[datetime] = None
+        self._products_cache: Optional[List[Dict]] = None
 
     def _is_time_in_period(self, check_time: time, start: time, end: time) -> bool:
         """Check if a time falls within a period, handling midnight crossover."""
@@ -292,24 +318,90 @@ class OctopusEnergyAPI:
         else:
             return f"Other tariff: {tariff_code}"
 
+    def _rates_contain_tomorrow(self, unit_rates: List[Dict], analysis_date: date) -> bool:
+        """Return True if the given unit_rates include periods covering tomorrow (UK).
+
+        Tomorrow's rates are published from ~4pm. We treat the cache as complete
+        for the day only once a fetched response actually contains them, rather
+        than assuming a clock time means the data has arrived.
+        """
+        if not unit_rates:
+            return False
+
+        # Start of tomorrow in UK time, expressed in UTC ISO (Z) for comparison
+        start_of_tomorrow_uk = datetime(
+            analysis_date.year, analysis_date.month, analysis_date.day,
+            0, 0, 0, tzinfo=UK_TZ,
+        ) + timedelta(days=1)
+        threshold = start_of_tomorrow_uk.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+
+        for rate in unit_rates:
+            valid_from = rate.get("valid_from")
+            if valid_from and valid_from >= threshold:
+                return True
+        return False
+
+    def _should_fetch_rates(self, analysis_date: date) -> bool:
+        """Decide whether to fetch rates this cycle.
+
+        Rules:
+        - If we have no usable cache for today (first run, restart, or the UK
+          date has rolled over), fetch regardless of time. Today's rates were
+          published yesterday afternoon, so this is always safe.
+        - If today is cached AND we already have tomorrow's rates, do nothing.
+        - Otherwise (today cached, tomorrow not yet), only attempt between
+          16:00 and 22:00 UK, and at most once every RATE_RETRY_MINUTES.
+        """
+        now_uk = datetime.now(UK_TZ)
+
+        # No usable cache for today -> must fetch
+        if self._rates_cache_date != analysis_date or not self._rates_cache:
+            return True
+
+        # Today cached and tomorrow already in hand -> nothing to do
+        if self._tomorrow_cached:
+            return False
+
+        # Tomorrow not yet cached: only inside the publication window
+        window_start = time(RATE_WINDOW_START_HOUR, 0)
+        window_end = time(RATE_WINDOW_END_HOUR, 0)
+        if not (window_start <= now_uk.time() < window_end):
+            return False
+
+        # ...and then at most once every RATE_RETRY_MINUTES
+        if self._last_rate_attempt is None:
+            return True
+        return (now_uk - self._last_rate_attempt) >= timedelta(minutes=RATE_RETRY_MINUTES)
+
+    def _get_products_catalogue(self) -> List[Dict]:
+        """Return the Octopus products catalogue, fetching once per rate cycle.
+
+        The catalogue rarely changes, so we fetch it a single time per rate
+        refresh and reuse it across all tariffs instead of fetching it once
+        per tariff (previously 4x per cycle).
+        """
+        if self._products_cache is None:
+            catalogue = self._rest_query(
+                f"{REST_BASE_URL}/products/?brand=OCTOPUS_ENERGY&is_business=false"
+            )
+            self._products_cache = catalogue.get("results", [])
+        return self._products_cache
+
     def _get_potential_tariff_rates(self, tariff: str, region_code: str, analysis_date: date) -> Tuple[float, List[Dict], str]:
         """Get tariff rates for a specific tariff and region using REST API (UK timezone)."""
-        from datetime import datetime, timedelta, timezone
-        from zoneinfo import ZoneInfo
-        
         try:
-            all_products = self._rest_query(f"{REST_BASE_URL}/products/?brand=OCTOPUS_ENERGY&is_business=false")
-            
+            all_results = self._get_products_catalogue()
+
             product = None
             # Try exact match first
-            for p in all_products["results"]:
+            for p in all_results:
                 if (p["display_name"] == tariff and p["direction"] == "IMPORT"):
                     product = p
                     break
-            
+
             # Try partial match if exact match fails
             if product is None:
-                for p in all_products["results"]:
+                for p in all_results:
                     if (tariff.lower() in p["display_name"].lower() and p["direction"] == "IMPORT"):
                         product = p
                         break
@@ -514,66 +606,138 @@ class OctopusEnergyAPI:
         
         return total_cost
 
+    def _refresh_rates_cache(self, region_code: str, analysis_date: date) -> None:
+        """Fetch and cache the per-tariff rates if the cache is stale.
+
+        On a UK date rollover the cache is rebuilt from scratch (which also
+        resets the tomorrow flag). Within a day, this only performs network
+        calls when _should_fetch_rates() permits (i.e. after 16:00, every
+        30 min, until tomorrow's rates arrive, stopping at 22:00).
+        """
+        # Date rollover: discard everything for the new day.
+        if self._rates_cache_date != analysis_date:
+            self._rates_cache = {}
+            self._rates_cache_date = analysis_date
+            self._tomorrow_cached = False
+            self._last_rate_attempt = None
+            self._products_cache = None
+
+        if not self._should_fetch_rates(analysis_date):
+            return
+
+        # Mark the attempt time and force a fresh products catalogue for this cycle.
+        self._last_rate_attempt = datetime.now(UK_TZ)
+        self._products_cache = None
+
+        new_cache: Dict[str, Tuple[float, List[Dict], str]] = {}
+        any_tomorrow = False
+
+        for tariff in TARIFFS_TO_COMPARE:
+            tariff_key = tariff.lower().replace(" ", "_")
+            try:
+                standing_charge, unit_rates, product_code = self._get_potential_tariff_rates(
+                    tariff, region_code, analysis_date)
+
+                if not unit_rates:
+                    _LOGGER.warning("No rate data available for %s on %s", tariff, analysis_date)
+                    continue
+
+                new_cache[tariff_key] = (standing_charge, unit_rates, product_code)
+                _LOGGER.info(
+                    "%s: fetched %d rate periods, standing charge: %sp",
+                    tariff, len(unit_rates), standing_charge,
+                )
+
+                # Only the half-hourly tariffs (Agile/Flexible) carry tomorrow's
+                # data; time-of-day tariffs (Go/Cosy) return a few fixed rates.
+                if tariff in ("Agile Octopus", "Flexible Octopus"):
+                    if self._rates_contain_tomorrow(unit_rates, analysis_date):
+                        any_tomorrow = True
+
+            except Exception as e:
+                _LOGGER.error("Error fetching rates for %s: %s", tariff, e, exc_info=True)
+
+        if new_cache:
+            self._rates_cache = new_cache
+            self._rates_cache_date = analysis_date
+
+        # Consider tomorrow "in hand" once the half-hourly rates include it.
+        if any_tomorrow:
+            self._tomorrow_cached = True
+            _LOGGER.info("Tomorrow's rates received and cached for %s", analysis_date)
+        else:
+            self._tomorrow_cached = False
+            now_uk = datetime.now(UK_TZ)
+            if time(RATE_WINDOW_START_HOUR, 0) <= now_uk.time() < time(RATE_WINDOW_END_HOUR, 0):
+                _LOGGER.info(
+                    "Tomorrow's rates not yet published; will retry in ~%d min",
+                    RATE_RETRY_MINUTES,
+                )
+
     def get_tariff_data(self) -> Dict[str, Any]:
-        """Get all tariff comparison data."""
+        """Get all tariff comparison data.
+
+        Consumption + cost are recomputed every cycle (on the user-configurable
+        interval). The 48 half-hourly rates are cached and only refetched once a
+        day after ~4pm, so frequent polling does not generate rate API calls.
+        """
         try:
-            # Get Kraken token
+            # --- Frequent path: token, account, consumption -----------------
             kraken_token = self._obtain_kraken_token()
-            
-            # Get account information
             account_info = self._get_account_info(kraken_token)
-            
-            # Get consumption data
-            consumption_data, analysis_date = self._get_consumption_data(account_info["device_id"], kraken_token)
-            
+            consumption_data, analysis_date = self._get_consumption_data(
+                account_info["device_id"], kraken_token)
+
             if not consumption_data:
                 _LOGGER.warning("No consumption data found")
                 return {}
-            
-            # Identify current tariff
+
             current_tariff_name = self._identify_current_tariff(account_info["tariff_code"])
-            
-            # Calculate total consumption
-            total_consumption = sum(float(reading.get("consumptionDelta", 0) or 0) / 1000 for reading in consumption_data)
-            
-            _LOGGER.info(f"Processing data for {analysis_date} (UK time)")
-            _LOGGER.info(f"Total consumption: {total_consumption}kWh from {len(consumption_data)} readings")
-            
-            # Compare costs across tariffs and collect rates
-            tariff_costs = {}
-            tariff_rates = {}
-            
+            total_consumption = sum(
+                float(reading.get("consumptionDelta", 0) or 0) / 1000
+                for reading in consumption_data
+            )
+
+            _LOGGER.info("Processing data for %s (UK time)", analysis_date)
+            _LOGGER.info(
+                "Total consumption: %skWh from %d readings",
+                total_consumption, len(consumption_data),
+            )
+
+            # --- Daily path: refresh rate cache only when due ---------------
+            self._refresh_rates_cache(account_info["region_code"], analysis_date)
+
+            # --- Recompute costs every cycle against the cached rates -------
+            tariff_costs: Dict[str, Any] = {}
+            tariff_rates: Dict[str, Any] = {}
+
             for tariff in TARIFFS_TO_COMPARE:
+                tariff_key = tariff.lower().replace(" ", "_")
+                cached = self._rates_cache.get(tariff_key)
+                if not cached:
+                    continue
+                standing_charge, unit_rates, _product_code = cached
+
                 try:
-                    standing_charge, unit_rates, product_code = self._get_potential_tariff_rates(
-                        tariff, account_info["region_code"], analysis_date)
-                    
-                    _LOGGER.info(f"{tariff}: Fetched {len(unit_rates)} rate periods, standing charge: {standing_charge}p")
-                    
-                    if not unit_rates:
-                        _LOGGER.warning("No rate data available for %s on %s", tariff, analysis_date)
-                        continue
-                    
                     total_cost = self._calculate_cost_for_consumption(
                         consumption_data, unit_rates, standing_charge, analysis_date, tariff)
-                    
-                    tariff_key = tariff.lower().replace(" ", "_")
                     tariff_costs[tariff_key] = total_cost
-                    
-                    _LOGGER.info(f"{tariff}: Total cost = {total_cost}p (energy: {total_cost - standing_charge}p + standing: {standing_charge}p)")
-                    
-                    # Store rates for event entities
+
+                    _LOGGER.info(
+                        "%s: total cost = %sp (energy: %sp + standing: %sp)",
+                        tariff, total_cost, total_cost - standing_charge, standing_charge,
+                    )
+
                     tariff_rates[tariff_key] = self._format_rates_for_event(unit_rates)
-                    
-                    # Store current rate for Flexible Octopus
+
                     if tariff == "Flexible Octopus":
                         current_flexible_rate = self._get_current_rate(unit_rates)
                         if current_flexible_rate is not None:
                             tariff_costs["current_flexible_rate"] = current_flexible_rate
-                    
+
                 except Exception as e:
                     _LOGGER.error("Error analyzing %s: %s", tariff, e, exc_info=True)
-            
+
             return {
                 "current_tariff_name": current_tariff_name,
                 "total_consumption": round(total_consumption, 3),
@@ -581,7 +745,7 @@ class OctopusEnergyAPI:
                 "tariff_rates": tariff_rates,
                 **tariff_costs
             }
-            
+
         except Exception as e:
             _LOGGER.error("Error getting tariff data: %s", e, exc_info=True)
             raise
