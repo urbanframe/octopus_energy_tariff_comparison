@@ -15,6 +15,9 @@ CONF_UPDATE_INTERVAL = "update_interval"
 GRAPHQL_URL = "https://api.octopus.energy/v1/graphql/"
 REST_BASE_URL = "https://api.octopus.energy/v1"
 
+# Kraken tokens are valid ~1 hour. Refresh a little early to be safe.
+KRAKEN_TOKEN_TTL_MINUTES = 50
+
 # Consumption / cost update interval (minutes).
 # This governs how often consumption + cost figures refresh. The 48 half-hourly
 # rates only change once a day (published ~4pm) and are cached separately, so

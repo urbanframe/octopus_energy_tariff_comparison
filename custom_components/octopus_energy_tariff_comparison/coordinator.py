@@ -56,4 +56,12 @@ class OctopusEnergyCoordinator(DataUpdateCoordinator):
             data = await self.hass.async_add_executor_job(self.api.get_tariff_data)
             return data
         except Exception as err:
+            msg = str(err)
+            if "KT-CT-1199" in msg or "Too many requests" in msg:
+                raise UpdateFailed(
+                    "Octopus API rate limit reached (KT-CT-1199). The limit is "
+                    "~100 calls/hour shared across all apps/integrations on your "
+                    "account. Consider increasing the consumption update interval "
+                    "in the integration options if this persists."
+                ) from err
             raise UpdateFailed(f"Error communicating with API: {err}") from err

@@ -17,6 +17,7 @@ from .const import (
     RATE_WINDOW_START_HOUR,
     RATE_WINDOW_END_HOUR,
     RATE_RETRY_MINUTES,
+    KRAKEN_TOKEN_TTL_MINUTES,
 )
 
 UK_TZ = ZoneInfo("Europe/London")
@@ -60,6 +61,11 @@ class OctopusEnergyAPI:
         """Initialize the API client."""
         self.config = config
         self._kraken_token = None
+        self._kraken_token_obtained_at: Optional[datetime] = None
+        # Account info (meter device id + tariff) doesn't change intraday, so we
+        # cache it for the day and refresh on the same cadence as rates.
+        self._account_info_cache: Optional[Dict[str, Any]] = None
+        self._account_info_date: Optional[date] = None
 
         # --- Rate caching state -------------------------------------------
         # The 48 half-hourly rates change once a day (published ~4pm). We cache
@@ -141,8 +147,47 @@ class OctopusEnergyAPI:
             _LOGGER.error("Failed to connect to Octopus Energy API: %s", e)
             raise
 
-    def _obtain_kraken_token(self) -> str:
-        """Obtain a Kraken token for GraphQL authentication."""
+    def _is_auth_error(self, err: Exception) -> bool:
+        """Return True if the error looks like an expired/invalid token.
+
+        Important: Octopus's "too many requests" error (KT-CT-1199) also has
+        errorType AUTHORIZATION, but it is NOT a token problem — refreshing the
+        token would just add another call and make throttling worse. We treat
+        only genuine token-auth failures as retryable here, and explicitly
+        exclude the rate-limit code.
+        """
+        msg = str(err)
+        if "KT-CT-1199" in msg or "Too many requests" in msg:
+            return False
+        # Token expiry / invalid signature codes (KT-CT-1124/1125/1139 etc.)
+        # and the generic missing-auth code surface as AUTHORIZATION errors.
+        auth_markers = (
+            "KT-CT-1124",  # token expired
+            "KT-CT-1125",  # invalid token
+            "KT-CT-1139",  # token signature
+            "Signature has expired",
+            "Invalid token",
+            "JWT",
+        )
+        return any(marker in msg for marker in auth_markers)
+
+    def _obtain_kraken_token(self, force_refresh: bool = False) -> str:
+        """Return a Kraken token, reusing a cached one until it nears expiry.
+
+        Tokens are valid for roughly an hour. Re-obtaining one every cycle is an
+        unnecessary GraphQL call that counts against the shared rate limit, so we
+        cache the token and only refresh when it is missing, stale, or a caller
+        forces a refresh (e.g. after an auth error from an expired token).
+        """
+        if not force_refresh and self._kraken_token and self._kraken_token_obtained_at:
+            age = datetime.now(timezone.utc) - self._kraken_token_obtained_at
+            if age < timedelta(minutes=KRAKEN_TOKEN_TTL_MINUTES):
+                return self._kraken_token
+
+        return self._fetch_kraken_token()
+
+    def _fetch_kraken_token(self) -> str:
+        """Obtain a fresh Kraken token for GraphQL authentication."""
         headers = {"Content-Type": "application/json"}
         
         mutation_variables = {
@@ -174,6 +219,7 @@ class OctopusEnergyAPI:
             
             token = result["data"]["obtainKrakenToken"]["token"]
             self._kraken_token = token
+            self._kraken_token_obtained_at = datetime.now(timezone.utc)
             return token
             
         except requests.exceptions.RequestException as e:
@@ -216,7 +262,22 @@ class OctopusEnergyAPI:
             _LOGGER.error("Error making REST API request to %s: %s", url, e)
             raise
 
-    def _get_account_info(self, kraken_token: str) -> Dict:
+    def _get_account_info(self, kraken_token: str, analysis_date: date) -> Dict:
+        """Return account info (device id + tariff), cached for the day.
+
+        The meter device id and current tariff don't change intraday, so we
+        fetch this once per day rather than every consumption cycle, saving a
+        GraphQL call against the shared rate limit.
+        """
+        if self._account_info_cache is not None and self._account_info_date == analysis_date:
+            return self._account_info_cache
+
+        info = self._fetch_account_info(kraken_token)
+        self._account_info_cache = info
+        self._account_info_date = analysis_date
+        return info
+
+    def _fetch_account_info(self, kraken_token: str) -> Dict:
         """Get account information including current tariff."""
         query = f"""query{{
             account(
@@ -709,10 +770,24 @@ class OctopusEnergyAPI:
         """
         try:
             # --- Frequent path: token, account, consumption -----------------
-            kraken_token = self._obtain_kraken_token()
-            account_info = self._get_account_info(kraken_token)
-            consumption_data, analysis_date = self._get_consumption_data(
-                account_info["device_id"], kraken_token)
+            # Account info is cached per UK day; the token is cached until it
+            # nears expiry. If a cached token has expired (auth error), refresh
+            # it once and retry, so a stale token doesn't fail the whole cycle.
+            uk_today = datetime.now(UK_TZ).date()
+            try:
+                kraken_token = self._obtain_kraken_token()
+                account_info = self._get_account_info(kraken_token, uk_today)
+                consumption_data, analysis_date = self._get_consumption_data(
+                    account_info["device_id"], kraken_token)
+            except Exception as first_err:
+                if self._is_auth_error(first_err):
+                    _LOGGER.info("Auth error with cached token; refreshing and retrying")
+                    kraken_token = self._obtain_kraken_token(force_refresh=True)
+                    account_info = self._get_account_info(kraken_token, uk_today)
+                    consumption_data, analysis_date = self._get_consumption_data(
+                        account_info["device_id"], kraken_token)
+                else:
+                    raise
 
             if not consumption_data:
                 _LOGGER.warning("No consumption data found")

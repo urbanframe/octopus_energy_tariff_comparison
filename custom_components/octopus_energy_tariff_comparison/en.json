@@ -1,0 +1,47 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Octopus Energy Tariff Comparison",
+        "description": "Enter your Octopus Energy account details",
+        "data": {
+          "account_number": "Account Number",
+          "api_key": "API Key",
+          "mpan": "MPAN",
+          "region_code": "Region Code"
+        }
+      },
+      "reconfigure": {
+        "title": "Update Octopus Energy account details",
+        "description": "Amend your Octopus Energy account details. The account number must stay the same as the originally configured account.",
+        "data": {
+          "account_number": "Account Number",
+          "api_key": "API Key",
+          "mpan": "MPAN",
+          "region_code": "Region Code"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Failed to connect to Octopus Energy API",
+      "invalid_auth": "Invalid authentication credentials",
+      "unknown": "Unexpected error occurred"
+    },
+    "abort": {
+      "already_configured": "Account is already configured",
+      "wrong_account": "The account number must match the originally configured account. To use a different account, add a new integration entry instead.",
+      "reconfigure_successful": "Account details updated successfully"
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Octopus Energy Options",
+        "description": "How often consumption and cost figures refresh. This does not affect the half-hourly rates, which update once a day after 4pm.",
+        "data": {
+          "update_interval": "Consumption update interval (minutes)"
+        }
+      }
+    }
+  }
+}
